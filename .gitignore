@@ -1,0 +1,19 @@
+# dependencies
+node_modules/
+functions/node_modules/
+
+# Firebase local cache
+.firebase/
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# env
+.env
+.env.local
