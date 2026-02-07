@@ -1,5 +1,6 @@
 {
   "hosting": {
+    "site": "goffin-booking-web",
     "public": "public",
     "ignore": [
       "firebase.json",
@@ -25,28 +26,24 @@
           }
         ]
       },
-
       {
         "source": "/index.js",
         "headers": [
           { "key": "Cache-Control", "value": "no-cache" }
         ]
       },
-
       {
         "source": "**/*.@(js|css)",
         "headers": [
           { "key": "Cache-Control", "value": "public,max-age=31536000,immutable" }
         ]
       },
-
       {
         "source": "**/*.@(png|jpg|jpeg|gif|svg|webp|ico)",
         "headers": [
           { "key": "Cache-Control", "value": "public,max-age=31536000,immutable" }
         ]
       },
-
       {
         "source": "**/*.html",
         "headers": [
