@@ -10,18 +10,22 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      # Auth Google via service account JSON (secret)
+      - name: Google Auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
 
       - name: Install Firebase CLI
-        run: npm install -g firebase-tools
+        run: npm i -g firebase-tools
 
       - name: Deploy to Firebase Hosting
         run: firebase deploy --only hosting --project goffin-booking-web
-        env:
-          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
