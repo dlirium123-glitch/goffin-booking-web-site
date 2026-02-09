@@ -2,7 +2,7 @@
 // Goffin Booking — index.v3.js
 // Version signature (anti-cache + debug)
 // =======================================================
-const INDEX_VERSION = "v3-2026-02-07-2";
+const INDEX_VERSION = "v3-2026-02-07-3";
 console.log("index.v3.js chargé ✅", INDEX_VERSION);
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -50,7 +50,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   function showBanner(type, text) {
-    // type: "ok" | "warn" | "alert"
     const el = document.getElementById("uiBanner");
     if (!el) return;
     el.className = type === "ok" ? "ok" : type === "warn" ? "warn" : "alert";
@@ -74,7 +73,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     return false;
   }
 
-  // minutes -> "09:30"
   function mmToHHMM(mins) {
     const h = Math.floor(mins / 60);
     const m = mins % 60;
@@ -87,7 +85,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     return x;
   }
 
-  // Monday start
   function startOfWeekMonday(d) {
     const x = startOfDay(d);
     const day = x.getDay(); // 0=Sun..6=Sat
@@ -115,7 +112,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   function buildTimeRows() {
     const rows = [];
-    const lastStart = CFG.endMinutes - CFG.slotMinutes; // ex: 17:30 - 90 => 16:00
+    const lastStart = CFG.endMinutes - CFG.slotMinutes; // 17:30 - 90 => 16:00
     let mins = CFG.startMinutes;
     while (mins <= lastStart) {
       rows.push(mins);
@@ -291,13 +288,20 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
-  // ---------- NEW: Admin detection + redirect ----------
+  // ---------- Admin detection + redirect (safe) ----------
+  let __adminChecked = false;
+  let __isAdminCached = false;
+
   async function isAdminUser(db, user) {
+    if (__adminChecked) return __isAdminCached;
+    __adminChecked = true;
     try {
       const snap = await db.collection("admins").doc(user.uid).get();
-      return snap.exists;
+      __isAdminCached = snap.exists;
+      return __isAdminCached;
     } catch (e) {
       console.error("isAdminUser error:", e);
+      __isAdminCached = false;
       return false;
     }
   }
@@ -306,7 +310,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     const admin = await isAdminUser(db, user);
     if (!admin) return false;
 
-    // Évite boucle si tu es déjà sur /admin
     const path = window.location.pathname || "";
     if (path.startsWith("/admin")) return true;
 
@@ -317,7 +320,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       </div>
       <div class="ok" style="display:block">Compte administrateur détecté ✅ Redirection vers le panneau admin…</div>
     `;
-    setTimeout(() => { window.location.href = "/admin"; }, 300);
+    setTimeout(() => { window.location.href = "/admin"; }, 250);
     return true;
   }
 
@@ -479,6 +482,28 @@ document.addEventListener("DOMContentLoaded", async () => {
     return map;
   }
 
+  // ✅ NEW: BusySlots (anonyme) => pour bloquer la vue client
+  async function fetchBusySlotsForWeek(db, weekStart) {
+    const weekEnd = addDays(weekStart, 7);
+    const tsStart = firebase.firestore.Timestamp.fromDate(weekStart);
+    const tsEnd = firebase.firestore.Timestamp.fromDate(weekEnd);
+
+    const snap = await db.collection("busySlots")
+      .where("start", ">=", tsStart)
+      .where("start", "<", tsEnd)
+      .get();
+
+    const map = new Map();
+    snap.forEach((doc) => {
+      const d = doc.data();
+      const start = d.start?.toDate?.() ? d.start.toDate() : null;
+      if (!start) return;
+      const key = `${dateKey(start)}_${String(start.getHours()).padStart(2, "0")}${String(start.getMinutes()).padStart(2, "0")}`;
+      map.set(key, { id: doc.id, ...d });
+    });
+    return map;
+  }
+
   async function fetchMyAppointments(db, uid) {
     const snap = await db.collection("appointments")
       .where("uid", "==", uid)
@@ -540,11 +565,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (!freeSnap.exists) throw new Error("Créneau introuvable (freeSlots).");
 
       const freeData = freeSnap.data() || {};
-      if (freeData.status !== "free") {
-        throw new Error("Ce créneau n’est plus disponible.");
-      }
+      if (freeData.status !== "free") throw new Error("Ce créneau n’est plus disponible.");
 
-      // ✅ IMPORTANT: flag anti-écrasement (synchro Outlook)
       tx.update(freeRef, {
         status: "blocked",
         blockedReason: "booking",
@@ -591,6 +613,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   const auth = firebase.auth();
   const db = firebase.firestore();
 
+  try { await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); } catch {}
+
   btnLogout.addEventListener("click", async () => {
     await auth.signOut();
   });
@@ -611,14 +635,22 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (calTitle) calTitle.textContent = `Semaine du ${days[0].toLocaleDateString()}`;
     if (calSub) calSub.textContent = `Créneaux: ${CFG.slotMinutes} min (RDV ${CFG.appointmentMinutes} + trajet)`;
 
+    // --- freeSlots ---
     try {
       lastFreeSlotsMap = await fetchFreeSlotsForWeek(db, currentWeekStart);
     } catch (e) {
       console.error(e);
-      if (!isProbablyAdblockNetworkError(e)) {
-        showBanner("alert", "Impossible de charger les créneaux (réseau / rules).");
-      }
+      if (!isProbablyAdblockNetworkError(e)) showBanner("alert", "Impossible de charger les créneaux (réseau / rules).");
       lastFreeSlotsMap = new Map();
+    }
+
+    // --- busySlots ---
+    let busyMap = new Map();
+    try {
+      busyMap = await fetchBusySlotsForWeek(db, currentWeekStart);
+    } catch (e) {
+      console.error(e);
+      busyMap = new Map();
     }
 
     const slotStateByKey = new Map();
@@ -633,30 +665,55 @@ document.addEventListener("DOMContentLoaded", async () => {
         const key = `${dateKey(start)}_${String(start.getHours()).padStart(2, "0")}${String(start.getMinutes()).padStart(2, "0")}`;
 
         const freeDoc = lastFreeSlotsMap.get(key);
+        const busyDoc = busyMap.get(key);
+
         let status = "blocked";
         let disabled = true;
         let title = "";
         const label = "";
 
+        // base: freeSlots
         if (freeDoc) {
           status = freeDoc.status || "blocked";
           disabled = status !== "free";
+
+          const br = String(freeDoc.blockedReason || "").toLowerCase();
+          if (status === "blocked") {
+            if (br === "outlook") title = "Indisponible (Outlook)";
+            else if (br === "validated") title = "Indisponible (validé)";
+            else if (br === "booking") title = "Indisponible";
+            else title = "Indisponible";
+          }
+          if (status === "free") title = "Disponible";
+        } else {
+          title = "Non généré (admin)";
         }
 
+        // règle 48h UI
         const min48 = new Date(now.getTime() + 48 * 60 * 60 * 1000);
         if (start < min48) {
           disabled = true;
           if (freeDoc && freeDoc.status === "free") title = "Indisponible (<48h)";
         }
 
-        if (selectedSlot && selectedSlot.key === key) {
-          status = "selected";
-          disabled = false;
+        // ✅ priorité absolue: busySlots => occupé
+        if (busyDoc) {
+          status = "blocked";
+          disabled = true;
+          title = "Indisponible (occupé)";
         }
 
-        if (!freeDoc) title = "Non généré (admin)";
-        if (freeDoc && freeDoc.status === "free") title = "Disponible";
-        if (freeDoc && freeDoc.status === "blocked") title = "Indisponible";
+        // sélection (seulement si pas busy)
+        if (selectedSlot && selectedSlot.key === key) {
+          if (!busyDoc) {
+            status = "selected";
+            disabled = false;
+            title = "Sélectionné";
+          } else {
+            // si devient busy -> annule la sélection
+            selectedSlot = null;
+          }
+        }
 
         slotStateByKey.set(key, { status, disabled, title, label });
       }
@@ -673,7 +730,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         if (selectedSlot && selectedSlot.key === key) {
           selectedSlot = null;
-          document.getElementById("btnBook").disabled = true;
+          const b = document.getElementById("btnBook");
+          if (b) b.disabled = true;
           await refreshCalendarAndAppointments(user);
           return;
         }
@@ -695,7 +753,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
 
         selectedSlot = { key, startDate: start, endDate: end, freeSlotDocId: freeDoc.id };
-        document.getElementById("btnBook").disabled = false;
+        const b = document.getElementById("btnBook");
+        if (b) b.disabled = false;
         await refreshCalendarAndAppointments(user);
       });
     });
@@ -708,8 +767,60 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
+  async function bindCalendarNav(user) {
+    document.getElementById("calPrev")?.addEventListener("click", async () => {
+      currentWeekStart = addDays(currentWeekStart, -7);
+      selectedSlot = null;
+      const b = document.getElementById("btnBook");
+      if (b) b.disabled = true;
+      await refreshCalendarAndAppointments(user);
+    });
+    document.getElementById("calNext")?.addEventListener("click", async () => {
+      currentWeekStart = addDays(currentWeekStart, 7);
+      selectedSlot = null;
+      const b = document.getElementById("btnBook");
+      if (b) b.disabled = true;
+      await refreshCalendarAndAppointments(user);
+    });
+    document.getElementById("calToday")?.addEventListener("click", async () => {
+      currentWeekStart = startOfWeekMonday(new Date());
+      selectedSlot = null;
+      const b = document.getElementById("btnBook");
+      if (b) b.disabled = true;
+      await refreshCalendarAndAppointments(user);
+    });
+  }
+
+  async function bindBookButton(user) {
+    document.getElementById("btnBook")?.addEventListener("click", async () => {
+      hideBanner();
+      const btnBook = document.getElementById("btnBook");
+      if (!selectedSlot) {
+        showBanner("alert", "Veuillez sélectionner un créneau.");
+        return;
+      }
+      try {
+        if (btnBook) btnBook.disabled = true;
+        const note = (document.getElementById("apptNote")?.value || "").trim();
+        await bookSlot(db, user, selectedSlot, note);
+        showBanner("ok", "Demande envoyée ✅ (en attente de validation)");
+        selectedSlot = null;
+        if (btnBook) btnBook.disabled = true;
+        await refreshCalendarAndAppointments(user);
+      } catch (e) {
+        console.error(e);
+        if (isProbablyAdblockNetworkError(e)) {
+          showBanner("warn", "Une extension (adblock) bloque des appels réseau, mais l’action peut quand même passer.");
+        } else {
+          showBanner("alert", e?.message || "Réservation impossible. Le créneau vient peut-être d’être pris.");
+        }
+      } finally {
+        if (btnBook) btnBook.disabled = !selectedSlot;
+      }
+    });
+  }
+
   async function ensureProfileThenBooking(user) {
-    // ✅ Admin ? => redirection immédiate
     const didRedirect = await redirectIfAdmin(db, user);
     if (didRedirect) return;
 
@@ -762,54 +873,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 
           renderBookingShell(user.email || "");
           selectedSlot = null;
-          document.getElementById("btnBook").disabled = true;
+          const b = document.getElementById("btnBook");
+          if (b) b.disabled = true;
 
-          document.getElementById("calPrev")?.addEventListener("click", async () => {
-            currentWeekStart = addDays(currentWeekStart, -7);
-            selectedSlot = null;
-            document.getElementById("btnBook").disabled = true;
-            await refreshCalendarAndAppointments(user);
-          });
-          document.getElementById("calNext")?.addEventListener("click", async () => {
-            currentWeekStart = addDays(currentWeekStart, 7);
-            selectedSlot = null;
-            document.getElementById("btnBook").disabled = true;
-            await refreshCalendarAndAppointments(user);
-          });
-          document.getElementById("calToday")?.addEventListener("click", async () => {
-            currentWeekStart = startOfWeekMonday(new Date());
-            selectedSlot = null;
-            document.getElementById("btnBook").disabled = true;
-            await refreshCalendarAndAppointments(user);
-          });
-
-          document.getElementById("btnBook")?.addEventListener("click", async () => {
-            hideBanner();
-            const btnBook = document.getElementById("btnBook");
-            if (!selectedSlot) {
-              showBanner("alert", "Veuillez sélectionner un créneau.");
-              return;
-            }
-            try {
-              btnBook.disabled = true;
-              const note = (document.getElementById("apptNote")?.value || "").trim();
-              await bookSlot(db, user, selectedSlot, note);
-              showBanner("ok", "Demande envoyée ✅ (en attente de validation)");
-              selectedSlot = null;
-              document.getElementById("btnBook").disabled = true;
-              await refreshCalendarAndAppointments(user);
-            } catch (e) {
-              console.error(e);
-              if (isProbablyAdblockNetworkError(e)) {
-                showBanner("warn", "Une extension (adblock) bloque des appels réseau, mais l’action peut quand même passer.");
-              } else {
-                showBanner("alert", e?.message || "Réservation impossible. Le créneau vient peut-être d’être pris.");
-              }
-            } finally {
-              btnBook.disabled = !selectedSlot;
-            }
-          });
-
+          await bindCalendarNav(user);
+          await bindBookButton(user);
           await refreshCalendarAndAppointments(user);
         } catch (e) {
           console.error(e);
@@ -826,57 +894,13 @@ document.addEventListener("DOMContentLoaded", async () => {
       return;
     }
 
-    // profile exists => step 3
     renderBookingShell(user.email || "");
     selectedSlot = null;
-    document.getElementById("btnBook").disabled = true;
+    const b = document.getElementById("btnBook");
+    if (b) b.disabled = true;
 
-    document.getElementById("calPrev")?.addEventListener("click", async () => {
-      currentWeekStart = addDays(currentWeekStart, -7);
-      selectedSlot = null;
-      document.getElementById("btnBook").disabled = true;
-      await refreshCalendarAndAppointments(user);
-    });
-    document.getElementById("calNext")?.addEventListener("click", async () => {
-      currentWeekStart = addDays(currentWeekStart, 7);
-      selectedSlot = null;
-      document.getElementById("btnBook").disabled = true;
-      await refreshCalendarAndAppointments(user);
-    });
-    document.getElementById("calToday")?.addEventListener("click", async () => {
-      currentWeekStart = startOfWeekMonday(new Date());
-      selectedSlot = null;
-      document.getElementById("btnBook").disabled = true;
-      await refreshCalendarAndAppointments(user);
-    });
-
-    document.getElementById("btnBook")?.addEventListener("click", async () => {
-      hideBanner();
-      const btnBook = document.getElementById("btnBook");
-      if (!selectedSlot) {
-        showBanner("alert", "Veuillez sélectionner un créneau.");
-        return;
-      }
-      try {
-        btnBook.disabled = true;
-        const note = (document.getElementById("apptNote")?.value || "").trim();
-        await bookSlot(db, user, selectedSlot, note);
-        showBanner("ok", "Demande envoyée ✅ (en attente de validation)");
-        selectedSlot = null;
-        document.getElementById("btnBook").disabled = true;
-        await refreshCalendarAndAppointments(user);
-      } catch (e) {
-        console.error(e);
-        if (isProbablyAdblockNetworkError(e)) {
-          showBanner("warn", "Une extension (adblock) bloque des appels réseau, mais l’action peut quand même passer.");
-        } else {
-          showBanner("alert", e?.message || "Réservation impossible. Le créneau vient peut-être d’être pris.");
-        }
-      } finally {
-        btnBook.disabled = !selectedSlot;
-      }
-    });
-
+    await bindCalendarNav(user);
+    await bindBookButton(user);
     await refreshCalendarAndAppointments(user);
   }
 
@@ -885,6 +909,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     setStatus(!!user);
 
     if (!user) {
+      __adminChecked = false;
+      __isAdminCached = false;
+
       renderAuth();
       wireAuthHandlers(auth);
       return;
