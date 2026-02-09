@@ -2,7 +2,7 @@
 // Goffin Booking — index.v3.js
 // Version signature (anti-cache + debug)
 // =======================================================
-const INDEX_VERSION = "v3-2026-02-07";
+const INDEX_VERSION = "v3-2026-02-07-2";
 console.log("index.v3.js chargé ✅", INDEX_VERSION);
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -289,6 +289,36 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
       });
     }
+  }
+
+  // ---------- NEW: Admin detection + redirect ----------
+  async function isAdminUser(db, user) {
+    try {
+      const snap = await db.collection("admins").doc(user.uid).get();
+      return snap.exists;
+    } catch (e) {
+      console.error("isAdminUser error:", e);
+      return false;
+    }
+  }
+
+  async function redirectIfAdmin(db, user) {
+    const admin = await isAdminUser(db, user);
+    if (!admin) return false;
+
+    // Évite boucle si tu es déjà sur /admin
+    const path = window.location.pathname || "";
+    if (path.startsWith("/admin")) return true;
+
+    right.innerHTML = `
+      <div class="stepWrap">
+        <span class="step">Admin</span>
+        <span class="muted" style="font-size:12px">${escapeHtml(user.email || "")}</span>
+      </div>
+      <div class="ok" style="display:block">Compte administrateur détecté ✅ Redirection vers le panneau admin…</div>
+    `;
+    setTimeout(() => { window.location.href = "/admin"; }, 300);
+    return true;
   }
 
   // ---------- UI: Profile ----------
@@ -679,6 +709,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   async function ensureProfileThenBooking(user) {
+    // ✅ Admin ? => redirection immédiate
+    const didRedirect = await redirectIfAdmin(db, user);
+    if (didRedirect) return;
+
     let snap;
     try {
       snap = await db.collection("clients").doc(user.uid).get();
