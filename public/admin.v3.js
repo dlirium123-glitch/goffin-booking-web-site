@@ -1,8 +1,8 @@
 /* ===============================
-   Admin — Goffin Booking
+   Admin — Goffin Booking (v3)
    Signature version + anti-cache
    =============================== */
-const ADMIN_VERSION = "admin-2026-02-07-1";
+const ADMIN_VERSION = "admin-2026-02-07-3";
 console.log("admin.v3.js chargé ✅", ADMIN_VERSION);
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -40,7 +40,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const appointmentsCol = db.collection("appointments");
   const modifsCol = db.collection("modificationRequests");
   const adminsCol = db.collection("admins");
-  const slotsCol = db.collection("slots");       // locks privés
+  const slotsCol = db.collection("slots");         // locks privés
   const freeSlotsCol = db.collection("freeSlots"); // planning public
 
   // DOM
@@ -88,6 +88,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   const DAY_END_MIN = 17 * 60 + 30;       // 17:30
   const LAST_START_MIN = DAY_END_MIN - SLOT_MINUTES; // 16:00
   const WEEKS = 8;
+
+  const BLOCK_REASON = {
+    OUTLOOK: "outlook",
+    VALIDATED: "validated",
+  };
 
   // ====== UI helpers ======
   function setStatus(isAdminLogged) {
@@ -187,7 +192,41 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
-  // ====== LOCKS: IDs aléatoires => on supprime par requête ======
+  // ==========================================================
+  // ✅ NEW: verrouillage "VALIDATED" dans freeSlots (immuable)
+  // ==========================================================
+  async function markFreeSlotAsValidated(appt) {
+    const start = appt.start?.toDate ? appt.start.toDate() : null;
+    const end = appt.end?.toDate ? appt.end.toDate() : null;
+    if (!start) return;
+
+    const freeId = freeSlotIdFromDate(start);
+    const freeRef = freeSlotsCol.doc(freeId);
+
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(freeRef);
+
+      const payload = {
+        status: "blocked",
+        blockedReason: BLOCK_REASON.VALIDATED,
+        updatedAt: FieldValue.serverTimestamp(),
+      };
+
+      // On ne perd jamais start/end
+      if (!snap.exists) {
+        payload.start = firebase.firestore.Timestamp.fromDate(start);
+        payload.end = firebase.firestore.Timestamp.fromDate(end || addMinutes(start, SLOT_MINUTES));
+        payload.createdAt = FieldValue.serverTimestamp();
+      }
+
+      // ✅ si Outlook avait déjà bloqué, on force validated (prioritaire)
+      tx.set(freeRef, payload, { merge: true });
+    });
+  }
+
+  // ==========================================================
+  // ✅ PROTECTION release: ne pas libérer si Outlook/Validated
+  // ==========================================================
   async function releaseSlotForAppointment(appt) {
     const start = appt.start?.toDate ? appt.start.toDate() : null;
     if (!start) return;
@@ -195,22 +234,17 @@ document.addEventListener("DOMContentLoaded", async () => {
     const freeId = freeSlotIdFromDate(start);
     const freeRef = freeSlotsCol.doc(freeId);
 
-    // ✅ PROTECTION: ne pas libérer si bloqué par Outlook
     await db.runTransaction(async (tx) => {
       const snap = await tx.get(freeRef);
-      if (!snap.exists) {
-        // si le doc n’existe pas, on ne le crée pas ici
-        return;
-      }
+      if (!snap.exists) return;
 
       const d = snap.data() || {};
       const reason = String(d.blockedReason || "").toLowerCase();
       const status = String(d.status || "").toLowerCase();
 
-      // Si Outlook a bloqué: on ne touche pas
-      if (status === "blocked" && reason === "outlook") return;
+      // ✅ jamais libérer si outlook / validated
+      if (status === "blocked" && (reason === BLOCK_REASON.OUTLOOK || reason === BLOCK_REASON.VALIDATED)) return;
 
-      // Sinon on libère (cas booking/refused/cancelled)
       tx.set(freeRef, {
         status: "free",
         blockedReason: null,
@@ -218,10 +252,10 @@ document.addEventListener("DOMContentLoaded", async () => {
       }, { merge: true });
     });
 
-    // 2) supprime locks slots liés à cet appointmentId
+    // Supprime locks slots liés à cet appointmentId
     const lockSnap = await slotsCol
       .where("appointmentId", "==", appt.id)
-      .limit(10)
+      .limit(25)
       .get();
 
     const batch = db.batch();
@@ -247,6 +281,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const isLate = (newStatus === "cancelled") ? computeLateCancel(appt.start) : false;
 
     try {
+      // 1) update appointment
       const payload = {
         status: newStatus,
         updatedAt: FieldValue.serverTimestamp(),
@@ -260,20 +295,26 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       await appointmentsCol.doc(appt.id).set(payload, { merge: true });
 
+      // 2) side-effects slots/freeSlots
+      if (newStatus === "validated") {
+        await markFreeSlotAsValidated(appt);
+      }
+
       if (releaseOnChange) {
         await releaseSlotForAppointment(appt);
       }
 
+      // 3) UI message
       if (newStatus === "validated") {
-        showOk(apptOk, "Rendez-vous validé ✅");
+        showOk(apptOk, "Rendez-vous validé ✅ (slot verrouillé: validated)");
       } else if (newStatus === "refused") {
-        showOk(apptOk, "Rendez-vous refusé ✅ — créneau libéré (si pas Outlook)");
+        showOk(apptOk, "Rendez-vous refusé ✅ — créneau libéré (si pas Outlook/validated)");
       } else {
         showOk(
           apptOk,
           isLate
-            ? "Rendez-vous annulé ✅ (annulation tardive <48h) — créneau libéré (si pas Outlook)"
-            : "Rendez-vous annulé ✅ — créneau libéré (si pas Outlook)"
+            ? "Rendez-vous annulé ✅ (annulation tardive <48h) — créneau libéré (si pas Outlook/validated)"
+            : "Rendez-vous annulé ✅ — créneau libéré (si pas Outlook/validated)"
         );
       }
 
@@ -383,19 +424,20 @@ document.addEventListener("DOMContentLoaded", async () => {
           const appt = byId.get(id);
 
           if (action === "validate") {
+            if (!window.confirm("Confirmer la VALIDATION ? Le créneau sera verrouillé (validated).")) return;
             return setStatusWithSideEffects(appt, "validated", { releaseOnChange: false });
           }
 
           if (action === "refuse") {
-            if (!window.confirm("Confirmer le REFUS ? Le créneau sera libéré (si pas Outlook).")) return;
+            if (!window.confirm("Confirmer le REFUS ? Le créneau sera libéré (si pas Outlook/validated).")) return;
             return setStatusWithSideEffects(appt, "refused", { releaseOnChange: true });
           }
 
           if (action === "cancel") {
             const isLate = computeLateCancel(appt?.start);
             const warning = isLate
-              ? "⚠️ Annulation à moins de 48h. Confirmer ? Le créneau sera libéré (si pas Outlook)."
-              : "Confirmer l’annulation ? Le créneau sera libéré (si pas Outlook).";
+              ? "⚠️ Annulation à moins de 48h. Confirmer ? Le créneau sera libéré (si pas Outlook/validated)."
+              : "Confirmer l’annulation ? Le créneau sera libéré (si pas Outlook/validated).";
             if (!window.confirm(warning)) return;
 
             return setStatusWithSideEffects(appt, "cancelled", {
@@ -520,7 +562,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
-  // ====== freeSlots generation ======
+  // ====== freeSlots generation (SAFE) ======
   function buildFreeSlots(weeks = WEEKS) {
     const res = [];
     const now = new Date();
@@ -543,7 +585,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           start: firebase.firestore.Timestamp.fromDate(start),
           end: firebase.firestore.Timestamp.fromDate(end),
           status: "free",
-          blockedReason: null,                 // ✅ utile
+          blockedReason: null,
           createdAt: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
         });
@@ -553,18 +595,49 @@ document.addEventListener("DOMContentLoaded", async () => {
     return res;
   }
 
-  async function commitBatches(docs) {
+  async function loadExistingFreeSlotsForRange(fromDate, toDate) {
+    // on s’appuie sur le champ "start" timestamp
+    const fromTs = firebase.firestore.Timestamp.fromDate(fromDate);
+    const toTs = firebase.firestore.Timestamp.fromDate(toDate);
+
+    const snap = await freeSlotsCol
+      .where("start", ">=", fromTs)
+      .where("start", "<", toTs)
+      .get();
+
+    const map = new Map();
+    snap.forEach((d) => map.set(d.id, d.data() || {}));
+    return map;
+  }
+
+  async function commitBatchesSafe(docs, existingMap) {
+    // ✅ Ne jamais écraser outlook/validated
+    const safe = docs.filter((s) => {
+      const ex = existingMap.get(s.id);
+      if (!ex) return true; // n’existe pas → OK
+      const status = String(ex.status || "").toLowerCase();
+      const reason = String(ex.blockedReason || "").toLowerCase();
+      if (status === "blocked" && (reason === BLOCK_REASON.OUTLOOK || reason === BLOCK_REASON.VALIDATED)) {
+        return false;
+      }
+      // si c'est déjà "blocked" autre raison, on évite aussi
+      if (status === "blocked") return false;
+      // si c'est free → OK (refresh des timestamps ok)
+      return true;
+    });
+
     const MAX = 450;
-    for (let i = 0; i < docs.length; i += MAX) {
+    for (let i = 0; i < safe.length; i += MAX) {
       const batch = db.batch();
-      const chunk = docs.slice(i, i + MAX);
+      const chunk = safe.slice(i, i + MAX);
 
       chunk.forEach((s) => {
         batch.set(freeSlotsCol.doc(s.id), {
           start: s.start,
           end: s.end,
           status: s.status,
-          blockedReason: s.blockedReason ?? null,   // ✅
+          blockedReason: s.blockedReason ?? null,
+          // createdAt uniquement si doc absent → on laisse merge faire le boulot (mais on évite d’écraser)
           createdAt: s.createdAt,
           updatedAt: s.updatedAt,
         }, { merge: true });
@@ -572,6 +645,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       await batch.commit();
     }
+
+    return { written: safe.length, skipped: docs.length - safe.length };
   }
 
   async function generateFreeSlots(weeks = WEEKS, preview = false) {
@@ -590,13 +665,27 @@ document.addEventListener("DOMContentLoaded", async () => {
       return;
     }
 
-    await commitBatches(docs);
-    showSlotsOk(`Génération OK ✅ ${docs.length} créneaux sur ${weeks} semaines (slots 90 min).`);
+    // 🔒 SAFE: charge existants sur la plage, skip outlook/validated
+    const now = new Date();
+    const from = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2);
+    const to = addMinutes(from, weeks * 7 * 24 * 60);
+
+    let existing = new Map();
+    try {
+      existing = await loadExistingFreeSlotsForRange(from, to);
+    } catch (e) {
+      console.warn("Impossible de précharger les freeSlots existants (index start?) — fallback: écriture simple désactivée.", e);
+      showSlotsErr("Index Firestore manquant sur freeSlots.start (range). Dis-moi si tu veux que je te donne le lien exact pour le créer.");
+      return;
+    }
+
+    const { written, skipped } = await commitBatchesSafe(docs, existing);
+    showSlotsOk(`Génération OK ✅ ${written} écrits / ${skipped} ignorés (déjà bloqués outlook/validated).`);
   }
 
   btnGenPreview.addEventListener("click", () => generateFreeSlots(WEEKS, true));
   btnGenFreeSlots.addEventListener("click", async () => {
-    if (!confirm(`Générer les freeSlots sur ${WEEKS} semaines (90 min) ?`)) return;
+    if (!confirm(`Générer les freeSlots sur ${WEEKS} semaines (90 min) ?\n⚠️ Ne remplacera pas les slots bloqués (outlook/validated).`)) return;
     try {
       await generateFreeSlots(WEEKS, false);
     } catch (e) {
@@ -611,9 +700,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("statusFilter")?.addEventListener("change", refreshAppointments);
   document.getElementById("modifFilter")?.addEventListener("change", refreshModifs);
 
+  let _debounce = null;
   document.getElementById("search")?.addEventListener("input", () => {
-    clearTimeout(window.__t);
-    window.__t = setTimeout(refreshAppointments, 250);
+    clearTimeout(_debounce);
+    _debounce = setTimeout(refreshAppointments, 250);
   });
 
   // ========= LOGIN MODAL =========
