@@ -32,5 +32,5 @@ jobs:
         env:
           FIREBASE_PROJECT_ID: "goffin-booking-web"
           OUTLOOK_ICS_URL: "${{ secrets.OUTLOOK_ICS_URL }}"
-          DAYS_FORWARD: "60"
+          DAYS_FORWARD: "90"
         run: node sync.js

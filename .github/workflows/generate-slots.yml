@@ -1,0 +1,29 @@
+name: Generate freeSlots (daily)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "10 2 * * *" # chaque nuit 02:10 UTC (gratuit)
+
+jobs:
+  gen:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install deps
+        working-directory: tools/slot-generator
+        run: npm install
+
+      - name: Run generator
+        working-directory: tools/slot-generator
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          DAYS_FORWARD: "90"
+        run: node sync.js

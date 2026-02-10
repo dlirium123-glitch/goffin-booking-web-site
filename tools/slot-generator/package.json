@@ -1,0 +1,8 @@
+{
+  "name": "slot-generator",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "firebase-admin": "^12.0.0"
+  }
+}
