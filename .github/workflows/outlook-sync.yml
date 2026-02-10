@@ -1,9 +1,9 @@
 name: Outlook → Firestore (freeSlots sync)
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
   schedule:
-    - cron: "*/30 * * * *"  # toutes les 30 minutes (gratuit)
+    - cron: "*/30 * * * *" # toutes les 30 minutes
 
 jobs:
   sync:
@@ -17,7 +17,6 @@ jobs:
         with:
           node-version: "20"
 
-      # Auth Google via Service Account JSON (simple & gratuit)
       - name: Google Auth
         uses: google-github-actions/auth@v2
         with:

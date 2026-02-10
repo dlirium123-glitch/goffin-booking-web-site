@@ -227,7 +227,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   // ==========================================================
-  // ✅ NEW: verrouillage "VALIDATED" dans freeSlots (immuable)
+  // ✅ verrouillage "VALIDATED" dans freeSlots (immuable)
   // ==========================================================
   async function markFreeSlotAsValidated(appt) {
     const start = appt.start?.toDate ? appt.start.toDate() : null;
@@ -253,13 +253,13 @@ document.addEventListener("DOMContentLoaded", async () => {
         payload.createdAt = FieldValue.serverTimestamp();
       }
 
-      // ✅ si Outlook avait déjà bloqué, on force validated (prioritaire)
+      // si Outlook avait déjà bloqué, on force validated (prioritaire)
       tx.set(freeRef, payload, { merge: true });
     });
   }
 
   // ==========================================================
-  // ✅ PROTECTION release: ne pas libérer si Outlook/Validated
+  // ✅ release: ne pas libérer si Outlook/Validated
   // ==========================================================
   async function releaseSlotForAppointment(appt) {
     const start = appt.start?.toDate ? appt.start.toDate() : null;
@@ -276,12 +276,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       const reason = String(d.blockedReason || "").toLowerCase();
       const status = String(d.status || "").toLowerCase();
 
-      // ✅ jamais libérer si outlook / validated
-      if (
-        status === "blocked" &&
-        (reason === BLOCK_REASON.OUTLOOK || reason === BLOCK_REASON.VALIDATED)
-      )
-        return;
+      // jamais libérer si outlook / validated
+      if (status === "blocked" && (reason === BLOCK_REASON.OUTLOOK || reason === BLOCK_REASON.VALIDATED)) return;
 
       tx.set(
         freeRef,
@@ -335,11 +331,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       await appointmentsCol.doc(appt.id).set(payload, { merge: true });
 
-      // 2) side-effects slots/freeSlots
+      // 2) side-effects
       if (newStatus === "validated") {
         await markFreeSlotAsValidated(appt);
       }
-
       if (releaseOnChange) {
         await releaseSlotForAppointment(appt);
       }
@@ -523,6 +518,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     return items;
   }
 
+  // ✅ MISSING FUNCTION (fix)
   async function refreshModifs() {
     if (!isAdmin) return;
 
@@ -650,7 +646,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   async function loadExistingFreeSlotsForRange(fromDate, toDate) {
-    // on s’appuie sur le champ "start" timestamp
     const fromTs = firebase.firestore.Timestamp.fromDate(fromDate);
     const toTs = firebase.firestore.Timestamp.fromDate(toDate);
 
@@ -662,18 +657,16 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   async function commitBatchesSafe(docs, existingMap) {
-    // ✅ Ne jamais écraser outlook/validated
     const safe = docs.filter((s) => {
       const ex = existingMap.get(s.id);
-      if (!ex) return true; // n’existe pas → OK
+      if (!ex) return true;
+
       const status = String(ex.status || "").toLowerCase();
       const reason = String(ex.blockedReason || "").toLowerCase();
-      if (status === "blocked" && (reason === BLOCK_REASON.OUTLOOK || reason === BLOCK_REASON.VALIDATED)) {
-        return false;
-      }
-      // si c'est déjà "blocked" autre raison, on évite aussi
+
+      if (status === "blocked" && (reason === BLOCK_REASON.OUTLOOK || reason === BLOCK_REASON.VALIDATED)) return false;
       if (status === "blocked") return false;
-      // si c'est free → OK
+
       return true;
     });
 
@@ -719,7 +712,6 @@ document.addEventListener("DOMContentLoaded", async () => {
       return;
     }
 
-    // 🔒 SAFE: charge existants sur la plage, skip outlook/validated
     const now = new Date();
     const from = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2);
     const to = addMinutes(from, weeks * 7 * 24 * 60);
@@ -728,13 +720,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     try {
       existing = await loadExistingFreeSlotsForRange(from, to);
     } catch (e) {
-      console.warn(
-        "Impossible de précharger les freeSlots existants (index start?) — fallback: écriture simple désactivée.",
-        e
-      );
-      showSlotsErr(
-        "Index Firestore manquant sur freeSlots.start (range). Dis-moi si tu veux que je te donne le lien exact pour le créer."
-      );
+      console.warn("Impossible de précharger les freeSlots existants (index start?)", e);
+      showSlotsErr("Index Firestore manquant sur freeSlots.start (range).");
       return;
     }
 
@@ -744,12 +731,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   btnGenPreview.addEventListener("click", () => generateFreeSlots(WEEKS, true));
   btnGenFreeSlots.addEventListener("click", async () => {
-    if (
-      !confirm(
-        `Générer les freeSlots sur ${WEEKS} semaines (90 min) ?\n⚠️ Ne remplacera pas les slots bloqués (outlook/validated).`
-      )
-    )
-      return;
+    if (!confirm(`Générer les freeSlots sur ${WEEKS} semaines (90 min) ?\n⚠️ Ne remplacera pas les slots bloqués (outlook/validated).`)) return;
     try {
       await generateFreeSlots(WEEKS, false);
     } catch (e) {

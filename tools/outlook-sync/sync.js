@@ -1,7 +1,7 @@
 /* eslint-disable no-console */
 const fetch = require("node-fetch");
 const ical = require("node-ical");
-const { Firestore, Timestamp, FieldValue } = require("@google-cloud/firestore");
+const { Firestore } = require("@google-cloud/firestore");
 
 function mustEnv(name) {
   const v = process.env[name];
@@ -50,17 +50,20 @@ function parseBusyIntervalsFromIcs(icsText, windowStart, windowEnd) {
   return busy;
 }
 
-function isReservedStatus(statusLower) {
-  return statusLower === "pending" || statusLower === "validated" || statusLower === "booked";
+function isReservedStatus(status) {
+  // adapte ici si tu ajoutes d'autres statuts réservés
+  return status === "pending" || status === "validated" || status === "booked";
 }
 
-function isFreeStatus(statusLower) {
-  return statusLower === "free" || statusLower === "" || statusLower == null;
+function isFreeStatus(status) {
+  // ton modèle utilise "free" pour dispo
+  return status === "free" || status === "" || status == null;
 }
 
 async function main() {
   const PROJECT_ID = mustEnv("FIREBASE_PROJECT_ID");
   const OUTLOOK_ICS_URL = mustEnv("OUTLOOK_ICS_URL");
+
   const DAYS_FORWARD = parseInt(process.env.DAYS_FORWARD || "60", 10);
 
   const windowStart = new Date();
@@ -71,7 +74,6 @@ async function main() {
 
   console.log("Sync window:", windowStart.toISOString(), "→", windowEnd.toISOString());
 
-  // Firestore client uses GOOGLE_APPLICATION_CREDENTIALS set by google-github-actions/auth
   const db = new Firestore({ projectId: PROJECT_ID });
 
   // 1) Read ICS
@@ -82,12 +84,12 @@ async function main() {
   const busy = parseBusyIntervalsFromIcs(icsText, windowStart, windowEnd);
   console.log("Busy intervals found:", busy.length);
 
-  // 3) Load freeSlots in range (Timestamp query = propre)
+  // 3) Load freeSlots in range
   console.log("Loading freeSlots…");
   const snap = await db
     .collection("freeSlots")
-    .where("start", ">=", Timestamp.fromDate(windowStart))
-    .where("start", "<", Timestamp.fromDate(windowEnd))
+    .where("start", ">=", windowStart)
+    .where("start", "<", windowEnd)
     .get();
 
   console.log("freeSlots in range:", snap.size);
@@ -116,22 +118,24 @@ async function main() {
     const end = toDateMaybe(d.end);
     if (!start || !end) continue;
 
-    const status = String(d.status || "").toLowerCase();
-    const br = d.blockedReason == null ? "" : String(d.blockedReason).toLowerCase();
-
+    const status = String(d.status || "");
+    const br = d.blockedReason == null ? "" : String(d.blockedReason);
     const hasConflict = d.conflict === true;
-    const conflictReason = d.conflictReason == null ? "" : String(d.conflictReason).toLowerCase();
+    const conflictReason = d.conflictReason == null ? "" : String(d.conflictReason);
 
     // Decide if Outlook overlaps this slot
     let isBusy = false;
     for (const it of busy) {
-      if (overlaps(start, end, it.start, it.end)) { isBusy = true; break; }
+      if (overlaps(start, end, it.start, it.end)) {
+        isBusy = true;
+        break;
+      }
     }
 
     // RULES:
-    // 1) FREE + busy => BLOCK(outlook)
-    // 2) RESERVED + busy => mark CONFLICT(outlook) (do not block)
-    // 3) BLOCKED(outlook) + not busy => FREE it
+    // 1) FREE + busy => BLOCK outlook
+    // 2) RESERVED + busy => CONFLICT (do not overwrite reservation)
+    // 3) BLOCKED outlook + not busy => FREE + clear conflict
     // 4) CONFLICT(outlook) + not busy => clear conflict
 
     if (isBusy) {
@@ -140,9 +144,9 @@ async function main() {
           status: "blocked",
           blockedReason: "outlook",
           conflict: false,
-          conflictReason: FieldValue.delete(),
-          conflictAt: FieldValue.delete(),
-          updatedAt: FieldValue.serverTimestamp(),
+          conflictReason: Firestore.FieldValue.delete(),
+          conflictAt: Firestore.FieldValue.delete(),
+          updatedAt: Firestore.FieldValue.serverTimestamp()
         });
         ops++; toBlock++;
         await commitIfNeeded();
@@ -154,8 +158,8 @@ async function main() {
           batch.update(doc.ref, {
             conflict: true,
             conflictReason: "outlook",
-            conflictAt: FieldValue.serverTimestamp(),
-            updatedAt: FieldValue.serverTimestamp(),
+            conflictAt: Firestore.FieldValue.serverTimestamp(),
+            updatedAt: Firestore.FieldValue.serverTimestamp()
           });
           ops++; conflicts++;
           await commitIfNeeded();
@@ -163,13 +167,13 @@ async function main() {
         continue;
       }
 
-      // autres statuts: on marque conflit (safe)
+      // autres statuts: on reste safe => conflit
       if (!hasConflict || conflictReason !== "outlook") {
         batch.update(doc.ref, {
           conflict: true,
           conflictReason: "outlook",
-          conflictAt: FieldValue.serverTimestamp(),
-          updatedAt: FieldValue.serverTimestamp(),
+          conflictAt: Firestore.FieldValue.serverTimestamp(),
+          updatedAt: Firestore.FieldValue.serverTimestamp()
         });
         ops++; conflicts++;
         await commitIfNeeded();
@@ -181,11 +185,11 @@ async function main() {
     if (status === "blocked" && br === "outlook") {
       batch.update(doc.ref, {
         status: "free",
-        blockedReason: FieldValue.delete(),
+        blockedReason: Firestore.FieldValue.delete(),
         conflict: false,
-        conflictReason: FieldValue.delete(),
-        conflictAt: FieldValue.delete(),
-        updatedAt: FieldValue.serverTimestamp(),
+        conflictReason: Firestore.FieldValue.delete(),
+        conflictAt: Firestore.FieldValue.delete(),
+        updatedAt: Firestore.FieldValue.serverTimestamp()
       });
       ops++; toFree++;
       await commitIfNeeded();
@@ -195,9 +199,9 @@ async function main() {
     if (hasConflict && conflictReason === "outlook") {
       batch.update(doc.ref, {
         conflict: false,
-        conflictReason: FieldValue.delete(),
-        conflictAt: FieldValue.delete(),
-        updatedAt: FieldValue.serverTimestamp(),
+        conflictReason: Firestore.FieldValue.delete(),
+        conflictAt: Firestore.FieldValue.delete(),
+        updatedAt: Firestore.FieldValue.serverTimestamp()
       });
       ops++; conflictsCleared++;
       await commitIfNeeded();
