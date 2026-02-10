@@ -2,6 +2,7 @@
    Admin — Goffin Booking (v3)
    Signature version + anti-cache
    =============================== */
+/* eslint-disable no-console */
 const ADMIN_VERSION = "admin-2026-02-07-3";
 console.log("admin.v3.js chargé ✅", ADMIN_VERSION);
 
@@ -40,7 +41,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const appointmentsCol = db.collection("appointments");
   const modifsCol = db.collection("modificationRequests");
   const adminsCol = db.collection("admins");
-  const slotsCol = db.collection("slots");         // locks privés
+  const slotsCol = db.collection("slots"); // locks privés
   const freeSlotsCol = db.collection("freeSlots"); // planning public
 
   // DOM
@@ -69,11 +70,24 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // Hard-stop si DOM essentiel manquant
   const required = [
-    pill, statusText, btnLogin, btnLogout,
-    apptList, apptEmpty, apptMsg, apptOk,
-    modifList, modifEmpty, modifMsg, modifOk,
-    overlay, loginErr,
-    btnGenFreeSlots, btnGenPreview, slotsMsg, slotsOk
+    pill,
+    statusText,
+    btnLogin,
+    btnLogout,
+    apptList,
+    apptEmpty,
+    apptMsg,
+    apptOk,
+    modifList,
+    modifEmpty,
+    modifMsg,
+    modifOk,
+    overlay,
+    loginErr,
+    btnGenFreeSlots,
+    btnGenPreview,
+    slotsMsg,
+    slotsOk,
   ];
   if (required.some((x) => !x)) {
     console.error("DOM manquant dans admin.html (un ou plusieurs IDs requis introuvables).");
@@ -84,8 +98,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // ====== CONFIG (cohérente index) ======
   const SLOT_MINUTES = 90;
-  const DAY_START_MIN = 9 * 60 + 30;      // 09:30
-  const DAY_END_MIN = 17 * 60 + 30;       // 17:30
+  const DAY_START_MIN = 9 * 60 + 30; // 09:30
+  const DAY_END_MIN = 17 * 60 + 30; // 17:30
   const LAST_START_MIN = DAY_END_MIN - SLOT_MINUTES; // 16:00
   const WEEKS = 8;
 
@@ -109,10 +123,22 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
-  function showErr(el, t) { el.style.display = "block"; el.textContent = t; }
-  function hideErr(el) { el.style.display = "none"; el.textContent = ""; }
-  function showOk(el, t) { el.style.display = "block"; el.textContent = t; }
-  function hideOk(el) { el.style.display = "none"; el.textContent = ""; }
+  function showErr(el, t) {
+    el.style.display = "block";
+    el.textContent = t;
+  }
+  function hideErr(el) {
+    el.style.display = "none";
+    el.textContent = "";
+  }
+  function showOk(el, t) {
+    el.style.display = "block";
+    el.textContent = t;
+  }
+  function hideOk(el) {
+    el.style.display = "none";
+    el.textContent = "";
+  }
 
   function showSlotsErr(t) {
     slotsMsg.style.display = "block";
@@ -127,8 +153,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     slotsMsg.textContent = "";
   }
   function clearSlotsMsg() {
-    slotsMsg.style.display = "none"; slotsMsg.textContent = "";
-    slotsOk.style.display = "none"; slotsOk.textContent = "";
+    slotsMsg.style.display = "none";
+    slotsMsg.textContent = "";
+    slotsOk.style.display = "none";
+    slotsOk.textContent = "";
   }
 
   function escapeHtml(s) {
@@ -144,8 +172,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     try {
       const d = ts?.toDate ? ts.toDate() : new Date(ts);
       return d.toLocaleString("fr-BE", {
-        weekday: "short", year: "numeric", month: "2-digit", day: "2-digit",
-        hour: "2-digit", minute: "2-digit"
+        weekday: "short",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
       });
     } catch {
       return "";
@@ -165,7 +197,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     return snap.exists;
   }
 
-  function pad2(n) { return String(n).padStart(2, "0"); }
+  function pad2(n) {
+    return String(n).padStart(2, "0");
+  }
 
   // ID doc freeSlots = YYYYMMDD_HHMM
   function freeSlotIdFromDate(d) {
@@ -186,7 +220,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       const start = startTs?.toDate ? startTs.toDate() : null;
       if (!start) return false;
       const now = new Date();
-      return (start.getTime() - now.getTime()) < (48 * 60 * 60 * 1000);
+      return start.getTime() - now.getTime() < 48 * 60 * 60 * 1000;
     } catch {
       return false;
     }
@@ -243,20 +277,25 @@ document.addEventListener("DOMContentLoaded", async () => {
       const status = String(d.status || "").toLowerCase();
 
       // ✅ jamais libérer si outlook / validated
-      if (status === "blocked" && (reason === BLOCK_REASON.OUTLOOK || reason === BLOCK_REASON.VALIDATED)) return;
+      if (
+        status === "blocked" &&
+        (reason === BLOCK_REASON.OUTLOOK || reason === BLOCK_REASON.VALIDATED)
+      )
+        return;
 
-      tx.set(freeRef, {
-        status: "free",
-        blockedReason: null,
-        updatedAt: FieldValue.serverTimestamp()
-      }, { merge: true });
+      tx.set(
+        freeRef,
+        {
+          status: "free",
+          blockedReason: null,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
     });
 
     // Supprime locks slots liés à cet appointmentId
-    const lockSnap = await slotsCol
-      .where("appointmentId", "==", appt.id)
-      .limit(25)
-      .get();
+    const lockSnap = await slotsCol.where("appointmentId", "==", appt.id).limit(25).get();
 
     const batch = db.batch();
     lockSnap.forEach((doc) => batch.delete(doc.ref));
@@ -266,7 +305,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   // ====== ACTIONS appointment ======
   async function setStatusWithSideEffects(appt, newStatus, opts) {
     const { releaseOnChange, askNote } = opts || {};
-    hideErr(apptMsg); hideOk(apptOk);
+    hideErr(apptMsg);
+    hideOk(apptOk);
 
     if (!appt || !appt.id) {
       showErr(apptMsg, "Rendez-vous introuvable.");
@@ -278,7 +318,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       cancelNote = (window.prompt("Note (optionnel) :", "") || "").trim();
     }
 
-    const isLate = (newStatus === "cancelled") ? computeLateCancel(appt.start) : false;
+    const isLate = newStatus === "cancelled" ? computeLateCancel(appt.start) : false;
 
     try {
       // 1) update appointment
@@ -345,7 +385,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   async function refreshAppointments() {
     if (!isAdmin) return;
 
-    hideErr(apptMsg); hideOk(apptOk);
+    hideErr(apptMsg);
+    hideOk(apptOk);
 
     const filterStatus = document.getElementById("statusFilter")?.value || "pending";
     const search = (document.getElementById("search")?.value || "").trim().toLowerCase();
@@ -370,18 +411,19 @@ document.addEventListener("DOMContentLoaded", async () => {
         return;
       }
 
-      apptList.innerHTML = items.map((a) => {
-        const st = statusBadge(a.status);
-        const when = fmtDate(a.start);
-        const uid = escapeHtml(a.uid || "");
-        const note = escapeHtml(a.note || "");
+      apptList.innerHTML = items
+        .map((a) => {
+          const st = statusBadge(a.status);
+          const when = fmtDate(a.start);
+          const uid = escapeHtml(a.uid || "");
+          const note = escapeHtml(a.note || "");
 
-        const isCancelled = (String(a.status || "").toLowerCase() === "cancelled");
-        const late = a.lateCancel === true;
-        const cancelledAt = a.cancelledAt ? fmtDate(a.cancelledAt) : "";
-        const cancelNote = escapeHtml(a.cancelNote || "");
+          const isCancelled = String(a.status || "").toLowerCase() === "cancelled";
+          const late = a.lateCancel === true;
+          const cancelledAt = a.cancelledAt ? fmtDate(a.cancelledAt) : "";
+          const cancelNote = escapeHtml(a.cancelNote || "");
 
-        return `
+          return `
           <div class="item" data-id="${a.id}">
             <div class="top">
               <div>
@@ -389,12 +431,20 @@ document.addEventListener("DOMContentLoaded", async () => {
                 <div class="muted">${note ? note : "<span class='tiny'>(pas de note)</span>"}</div>
                 <div class="tiny">uid: ${uid}</div>
 
-                ${isCancelled ? `
+                ${
+                  isCancelled
+                    ? `
                   <div class="hr"></div>
                   <div class="tiny"><b>Annulation :</b> ${cancelledAt ? cancelledAt : "—"}</div>
-                  ${late ? `<div class="tiny" style="color:#b45309;font-weight:900">⚠️ Annulation tardive &lt;48h</div>` : ``}
+                  ${
+                    late
+                      ? `<div class="tiny" style="color:#b45309;font-weight:900">⚠️ Annulation tardive &lt;48h</div>`
+                      : ``
+                  }
                   ${cancelNote ? `<div class="tiny"><b>Note :</b> ${cancelNote}</div>` : ``}
-                ` : ``}
+                `
+                    : ``
+                }
               </div>
 
               <div style="display:flex; flex-direction:column; align-items:flex-end; gap:6px">
@@ -410,13 +460,15 @@ document.addEventListener("DOMContentLoaded", async () => {
             </div>
           </div>
         `;
-      }).join("");
+        })
+        .join("");
 
       const byId = new Map(items.map((x) => [x.id, x]));
 
       apptList.querySelectorAll("[data-action]").forEach((btn) => {
         btn.addEventListener("click", async () => {
-          hideErr(apptMsg); hideOk(apptOk);
+          hideErr(apptMsg);
+          hideOk(apptOk);
 
           const card = btn.closest("[data-id]");
           const id = card?.getAttribute("data-id");
@@ -442,12 +494,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 
             return setStatusWithSideEffects(appt, "cancelled", {
               releaseOnChange: true,
-              askNote: true
+              askNote: true,
             });
           }
         });
       });
-
     } catch (e) {
       console.error(e);
       showErr(apptMsg, "Impossible de charger les rendez-vous.");
@@ -475,7 +526,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   async function refreshModifs() {
     if (!isAdmin) return;
 
-    hideErr(modifMsg); hideOk(modifOk);
+    hideErr(modifMsg);
+    hideOk(modifOk);
 
     const filter = document.getElementById("modifFilter")?.value || "new";
 
@@ -491,15 +543,16 @@ document.addEventListener("DOMContentLoaded", async () => {
         return;
       }
 
-      modifList.innerHTML = items.map((m) => {
-        const when = fmtDate(m.appointmentStart);
-        const adr = escapeHtml(m.appointmentAddress || "");
-        const msg = escapeHtml(m.message || "");
-        const uid = escapeHtml(m.uid || "");
-        const apptId = escapeHtml(m.appointmentId || "");
-        const status = escapeHtml(m.status || "new");
+      modifList.innerHTML = items
+        .map((m) => {
+          const when = fmtDate(m.appointmentStart);
+          const adr = escapeHtml(m.appointmentAddress || "");
+          const msg = escapeHtml(m.message || "");
+          const uid = escapeHtml(m.uid || "");
+          const apptId = escapeHtml(m.appointmentId || "");
+          const status = escapeHtml(m.status || "new");
 
-        return `
+          return `
           <div class="item" data-id="${m.id}">
             <div class="top">
               <div>
@@ -521,11 +574,13 @@ document.addEventListener("DOMContentLoaded", async () => {
             </div>
           </div>
         `;
-      }).join("");
+        })
+        .join("");
 
       modifList.querySelectorAll("[data-action]").forEach((btn) => {
         btn.addEventListener("click", async () => {
-          hideErr(modifMsg); hideOk(modifOk);
+          hideErr(modifMsg);
+          hideOk(modifOk);
 
           const card = btn.closest("[data-id]");
           const id = card?.getAttribute("data-id");
@@ -554,7 +609,6 @@ document.addEventListener("DOMContentLoaded", async () => {
           }
         });
       });
-
     } catch (e) {
       console.error(e);
       showErr(modifMsg, "Impossible de charger les demandes.");
@@ -600,10 +654,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const fromTs = firebase.firestore.Timestamp.fromDate(fromDate);
     const toTs = firebase.firestore.Timestamp.fromDate(toDate);
 
-    const snap = await freeSlotsCol
-      .where("start", ">=", fromTs)
-      .where("start", "<", toTs)
-      .get();
+    const snap = await freeSlotsCol.where("start", ">=", fromTs).where("start", "<", toTs).get();
 
     const map = new Map();
     snap.forEach((d) => map.set(d.id, d.data() || {}));
@@ -622,7 +673,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
       // si c'est déjà "blocked" autre raison, on évite aussi
       if (status === "blocked") return false;
-      // si c'est free → OK (refresh des timestamps ok)
+      // si c'est free → OK
       return true;
     });
 
@@ -632,15 +683,18 @@ document.addEventListener("DOMContentLoaded", async () => {
       const chunk = safe.slice(i, i + MAX);
 
       chunk.forEach((s) => {
-        batch.set(freeSlotsCol.doc(s.id), {
-          start: s.start,
-          end: s.end,
-          status: s.status,
-          blockedReason: s.blockedReason ?? null,
-          // createdAt uniquement si doc absent → on laisse merge faire le boulot (mais on évite d’écraser)
-          createdAt: s.createdAt,
-          updatedAt: s.updatedAt,
-        }, { merge: true });
+        batch.set(
+          freeSlotsCol.doc(s.id),
+          {
+            start: s.start,
+            end: s.end,
+            status: s.status,
+            blockedReason: s.blockedReason ?? null,
+            createdAt: s.createdAt,
+            updatedAt: s.updatedAt,
+          },
+          { merge: true }
+        );
       });
 
       await batch.commit();
@@ -674,8 +728,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     try {
       existing = await loadExistingFreeSlotsForRange(from, to);
     } catch (e) {
-      console.warn("Impossible de précharger les freeSlots existants (index start?) — fallback: écriture simple désactivée.", e);
-      showSlotsErr("Index Firestore manquant sur freeSlots.start (range). Dis-moi si tu veux que je te donne le lien exact pour le créer.");
+      console.warn(
+        "Impossible de précharger les freeSlots existants (index start?) — fallback: écriture simple désactivée.",
+        e
+      );
+      showSlotsErr(
+        "Index Firestore manquant sur freeSlots.start (range). Dis-moi si tu veux que je te donne le lien exact pour le créer."
+      );
       return;
     }
 
@@ -685,7 +744,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   btnGenPreview.addEventListener("click", () => generateFreeSlots(WEEKS, true));
   btnGenFreeSlots.addEventListener("click", async () => {
-    if (!confirm(`Générer les freeSlots sur ${WEEKS} semaines (90 min) ?\n⚠️ Ne remplacera pas les slots bloqués (outlook/validated).`)) return;
+    if (
+      !confirm(
+        `Générer les freeSlots sur ${WEEKS} semaines (90 min) ?\n⚠️ Ne remplacera pas les slots bloqués (outlook/validated).`
+      )
+    )
+      return;
     try {
       await generateFreeSlots(WEEKS, false);
     } catch (e) {
@@ -758,8 +822,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // ========= PROTECTION =========
   auth.onAuthStateChanged(async (user) => {
-    hideErr(apptMsg); hideOk(apptOk);
-    hideErr(modifMsg); hideOk(modifOk);
+    hideErr(apptMsg);
+    hideOk(apptOk);
+    hideErr(modifMsg);
+    hideOk(modifOk);
     clearSlotsMsg();
 
     isAdmin = false;
@@ -782,7 +848,9 @@ document.addEventListener("DOMContentLoaded", async () => {
       setStatus(false);
       apptList.innerHTML = `<div class="muted"><b>Accès refusé</b> : ce compte n’est pas administrateur.<br/>Retour à l’accueil…</div>`;
       modifList.innerHTML = `<div class="muted"><b>Accès refusé</b> : ce compte n’est pas administrateur.<br/>Retour à l’accueil…</div>`;
-      setTimeout(() => { window.location.href = "/"; }, 2000);
+      setTimeout(() => {
+        window.location.href = "/";
+      }, 2000);
       return;
     }
 

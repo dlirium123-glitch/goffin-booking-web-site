@@ -1,7 +1,7 @@
 /* eslint-disable no-console */
 const fetch = require("node-fetch");
 const ical = require("node-ical");
-const { Firestore } = require("@google-cloud/firestore");
+const { Firestore, Timestamp, FieldValue } = require("@google-cloud/firestore");
 
 function mustEnv(name) {
   const v = process.env[name];
@@ -40,23 +40,29 @@ function parseBusyIntervalsFromIcs(icsText, windowStart, windowEnd) {
     const end = ev.end instanceof Date ? ev.end : null;
     if (!start || !end) continue;
 
-    // ignore all-day? (option: treat as busy)
-    // Here: treat everything as busy
+    // treat everything as busy (including all-day)
     if (overlaps(start, end, windowStart, windowEnd)) {
       busy.push({ start, end });
     }
   }
 
-  // Optional: sort
   busy.sort((a, b) => a.start - b.start);
   return busy;
+}
+
+function isReservedStatus(statusLower) {
+  return statusLower === "pending" || statusLower === "validated" || statusLower === "booked";
+}
+
+function isFreeStatus(statusLower) {
+  return statusLower === "free" || statusLower === "" || statusLower == null;
 }
 
 async function main() {
   const PROJECT_ID = mustEnv("FIREBASE_PROJECT_ID");
   const OUTLOOK_ICS_URL = mustEnv("OUTLOOK_ICS_URL");
-
   const DAYS_FORWARD = parseInt(process.env.DAYS_FORWARD || "60", 10);
+
   const windowStart = new Date();
   windowStart.setHours(0, 0, 0, 0);
 
@@ -65,7 +71,7 @@ async function main() {
 
   console.log("Sync window:", windowStart.toISOString(), "→", windowEnd.toISOString());
 
-  // Firestore client uses GOOGLE_APPLICATION_CREDENTIALS set by GitHub Action auth step
+  // Firestore client uses GOOGLE_APPLICATION_CREDENTIALS set by google-github-actions/auth
   const db = new Firestore({ projectId: PROJECT_ID });
 
   // 1) Read ICS
@@ -76,41 +82,45 @@ async function main() {
   const busy = parseBusyIntervalsFromIcs(icsText, windowStart, windowEnd);
   console.log("Busy intervals found:", busy.length);
 
-  // 3) Load freeSlots in range
+  // 3) Load freeSlots in range (Timestamp query = propre)
   console.log("Loading freeSlots…");
-  const snap = await db.collection("freeSlots")
-    .where("start", ">=", windowStart)
-    .where("start", "<", windowEnd)
+  const snap = await db
+    .collection("freeSlots")
+    .where("start", ">=", Timestamp.fromDate(windowStart))
+    .where("start", "<", Timestamp.fromDate(windowEnd))
     .get();
 
   console.log("freeSlots in range:", snap.size);
 
   let toBlock = 0;
   let toFree = 0;
+  let conflicts = 0;
+  let conflictsCleared = 0;
 
   const batchSize = 400;
   let batch = db.batch();
   let ops = 0;
 
-  function commitIfNeeded() {
+  async function commitIfNeeded() {
     if (ops >= batchSize) {
       const b = batch;
       batch = db.batch();
       ops = 0;
-      return b.commit();
+      await b.commit();
     }
-    return Promise.resolve();
   }
 
   for (const doc of snap.docs) {
     const d = doc.data() || {};
     const start = toDateMaybe(d.start);
     const end = toDateMaybe(d.end);
-
     if (!start || !end) continue;
 
-    const status = String(d.status || "");
-    const br = String(d.blockedReason || "");
+    const status = String(d.status || "").toLowerCase();
+    const br = d.blockedReason == null ? "" : String(d.blockedReason).toLowerCase();
+
+    const hasConflict = d.conflict === true;
+    const conflictReason = d.conflictReason == null ? "" : String(d.conflictReason).toLowerCase();
 
     // Decide if Outlook overlaps this slot
     let isBusy = false;
@@ -118,28 +128,78 @@ async function main() {
       if (overlaps(start, end, it.start, it.end)) { isBusy = true; break; }
     }
 
-    // We only manage Outlook blocks:
-    // - if currently free and busy => block (outlook)
-    // - if currently blocked/outlook and not busy => free
-    // - never touch booking/validated/manual/etc
-    if (status === "free" && isBusy) {
+    // RULES:
+    // 1) FREE + busy => BLOCK(outlook)
+    // 2) RESERVED + busy => mark CONFLICT(outlook) (do not block)
+    // 3) BLOCKED(outlook) + not busy => FREE it
+    // 4) CONFLICT(outlook) + not busy => clear conflict
+
+    if (isBusy) {
+      if (isFreeStatus(status)) {
+        batch.update(doc.ref, {
+          status: "blocked",
+          blockedReason: "outlook",
+          conflict: false,
+          conflictReason: FieldValue.delete(),
+          conflictAt: FieldValue.delete(),
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+        ops++; toBlock++;
+        await commitIfNeeded();
+        continue;
+      }
+
+      if (isReservedStatus(status)) {
+        if (!hasConflict || conflictReason !== "outlook") {
+          batch.update(doc.ref, {
+            conflict: true,
+            conflictReason: "outlook",
+            conflictAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+          ops++; conflicts++;
+          await commitIfNeeded();
+        }
+        continue;
+      }
+
+      // autres statuts: on marque conflit (safe)
+      if (!hasConflict || conflictReason !== "outlook") {
+        batch.update(doc.ref, {
+          conflict: true,
+          conflictReason: "outlook",
+          conflictAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+        ops++; conflicts++;
+        await commitIfNeeded();
+      }
+      continue;
+    }
+
+    // NOT BUSY (Outlook free)
+    if (status === "blocked" && br === "outlook") {
       batch.update(doc.ref, {
-        status: "blocked",
-        blockedReason: "outlook",
-        updatedAt: Firestore.FieldValue.serverTimestamp(),
+        status: "free",
+        blockedReason: FieldValue.delete(),
+        conflict: false,
+        conflictReason: FieldValue.delete(),
+        conflictAt: FieldValue.delete(),
+        updatedAt: FieldValue.serverTimestamp(),
       });
-      ops++; toBlock++;
+      ops++; toFree++;
       await commitIfNeeded();
       continue;
     }
 
-    if (status === "blocked" && br === "outlook" && !isBusy) {
+    if (hasConflict && conflictReason === "outlook") {
       batch.update(doc.ref, {
-        status: "free",
-        blockedReason: Firestore.FieldValue.delete(),
-        updatedAt: Firestore.FieldValue.serverTimestamp(),
+        conflict: false,
+        conflictReason: FieldValue.delete(),
+        conflictAt: FieldValue.delete(),
+        updatedAt: FieldValue.serverTimestamp(),
       });
-      ops++; toFree++;
+      ops++; conflictsCleared++;
       await commitIfNeeded();
       continue;
     }
@@ -147,7 +207,7 @@ async function main() {
 
   if (ops > 0) await batch.commit();
 
-  console.log("DONE ✅", { toBlock, toFree });
+  console.log("DONE ✅", { toBlock, toFree, conflicts, conflictsCleared });
 }
 
 main().catch((e) => {

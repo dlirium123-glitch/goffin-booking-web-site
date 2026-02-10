@@ -1,8 +1,10 @@
 {
   "name": "slot-generator",
   "private": true,
-  "type": "module",
+  "version": "1.0.0",
+  "type": "commonjs",
+  "main": "sync.js",
   "dependencies": {
-    "firebase-admin": "^12.0.0"
+    "@google-cloud/firestore": "^7.11.0"
   }
 }

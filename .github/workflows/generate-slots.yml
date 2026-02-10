@@ -3,7 +3,7 @@ name: Generate freeSlots (daily)
 on:
   workflow_dispatch:
   schedule:
-    - cron: "10 2 * * *" # chaque nuit 02:10 UTC (gratuit)
+    - cron: "15 2 * * *" # chaque jour vers 02:15 (heure UTC du runner)
 
 jobs:
   gen:
@@ -17,6 +17,11 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Google Auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: "${{ secrets.FIREBASE_SERVICE_ACCOUNT }}"
+
       - name: Install deps
         working-directory: tools/slot-generator
         run: npm install
@@ -24,6 +29,10 @@ jobs:
       - name: Run generator
         working-directory: tools/slot-generator
         env:
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          FIREBASE_PROJECT_ID: "goffin-booking-web"
           DAYS_FORWARD: "90"
+          SLOT_MINUTES: "90"
+          DAY_START: "09:30"
+          DAY_END: "17:30"
+          START_OFFSET_DAYS: "2"
         run: node sync.js
