@@ -1,8 +1,8 @@
 // =======================================================
-// Goffin Booking — index.v3.js
-// Version signature (anti-cache + debug)
+// Goffin Booking — index.v3.js (AUTO-GRID + 90min booking)
+// Compatible freeSlots 30/60/90 min + busySlots Outlook
 // =======================================================
-const INDEX_VERSION = "v3-2026-02-07-3";
+const INDEX_VERSION = "v3-2026-02-11-auto-grid-1";
 console.log("index.v3.js chargé ✅", INDEX_VERSION);
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -20,9 +20,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   // ---------- CONFIG ----------
   const CFG = {
     daysToShow: 5,                 // Lun -> Ven
-    startMinutes: 9 * 60 + 30,     // 09:30
-    endMinutes: 17 * 60 + 30,      // 17:30
-    slotMinutes: 90,               // 60 + 30 trajet
+    // Valeurs fallback si on ne détecte rien (semaine vide)
+    startMinutesFallback: 9 * 60 + 30,  // 09:30
+    endMinutesFallback: 17 * 60 + 30,   // 17:30
+    gridStepFallback: 30,               // affichage fallback
+    bookingMinutes: 90,                 // durée totale "réservable"
     appointmentMinutes: 60,
     weeksToShowLabel: "Semaine",
   };
@@ -110,17 +112,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     return `${y}-${mo}-${da}`;
   }
 
-  function buildTimeRows() {
-    const rows = [];
-    const lastStart = CFG.endMinutes - CFG.slotMinutes; // 17:30 - 90 => 16:00
-    let mins = CFG.startMinutes;
-    while (mins <= lastStart) {
-      rows.push(mins);
-      mins += CFG.slotMinutes;
-    }
-    return rows;
-  }
-
   function dayLabel(d) {
     const names = ["Dim", "Lun", "Mar", "Mer", "Jeu", "Ven", "Sam"];
     return `${names[d.getDay()]} ${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -129,6 +120,18 @@ document.addEventListener("DOMContentLoaded", async () => {
   function isProbablyAdblockNetworkError(err) {
     const msg = String(err?.message || "");
     return msg.includes("ERR_BLOCKED_BY_CLIENT") || msg.includes("blocked by client");
+  }
+
+  function makeWeekDays(weekStart) {
+    return Array.from({ length: CFG.daysToShow }, (_, i) => addDays(weekStart, i));
+  }
+
+  function keyFromDate(d) {
+    return `${dateKey(d)}_${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}`;
+  }
+
+  function minutesOfDay(d) {
+    return d.getHours() * 60 + d.getMinutes();
   }
 
   // ---------- UI: Auth ----------
@@ -417,7 +420,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     `;
   }
 
-  function renderCalendarGrid(weekStart, days, timeRows, slotStateByKey) {
+  function renderCalendarGrid(days, timeRows, slotStateByKey) {
     const grid = document.getElementById("calGrid");
     if (!grid) return;
 
@@ -430,13 +433,14 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     const rowsHtml = timeRows.map((mins) => {
       const timeCell = `<div class="calCell timeCell">${escapeHtml(mmToHHMM(mins))}</div>`;
+
       const dayCells = days.map((d) => {
         const slotStart = new Date(d);
         slotStart.setHours(0, 0, 0, 0);
         slotStart.setMinutes(mins);
 
-        const key = `${dateKey(slotStart)}_${String(slotStart.getHours()).padStart(2, "0")}${String(slotStart.getMinutes()).padStart(2, "0")}`;
-        const st = slotStateByKey.get(key) || { status: "unknown", disabled: true };
+        const key = keyFromDate(slotStart);
+        const st = slotStateByKey.get(key) || { status: "blocked", disabled: true, title: "" };
 
         const classes = ["calCell", "slot"];
         if (st.disabled) classes.push("disabled");
@@ -456,10 +460,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     grid.innerHTML = headRow + rowsHtml;
   }
 
-  function makeWeekDays(weekStart) {
-    return Array.from({ length: CFG.daysToShow }, (_, i) => addDays(weekStart, i));
-  }
-
   // ---------- Firestore ops ----------
   async function fetchFreeSlotsForWeek(db, weekStart) {
     const weekEnd = addDays(weekStart, 7);
@@ -471,18 +471,25 @@ document.addEventListener("DOMContentLoaded", async () => {
       .where("start", "<", tsEnd)
       .get();
 
-    const map = new Map();
+    const map = new Map(); // key => { id, ...data, __startDate }
+    const list = [];
     snap.forEach((doc) => {
-      const d = doc.data();
+      const d = doc.data() || {};
       const start = d.start?.toDate?.() ? d.start.toDate() : null;
+      const end = d.end?.toDate?.() ? d.end.toDate() : null;
       if (!start) return;
-      const key = `${dateKey(start)}_${String(start.getHours()).padStart(2, "0")}${String(start.getMinutes()).padStart(2, "0")}`;
-      map.set(key, { id: doc.id, ...d });
+
+      const key = keyFromDate(start);
+      const item = { id: doc.id, ...d, __startDate: start, __endDate: end };
+      map.set(key, item);
+      list.push(item);
     });
-    return map;
+
+    // tri utile pour détection du pas
+    list.sort((a, b) => (a.__startDate?.getTime?.() || 0) - (b.__startDate?.getTime?.() || 0));
+    return { map, list };
   }
 
-  // ✅ NEW: BusySlots (anonyme) => pour bloquer la vue client
   async function fetchBusySlotsForWeek(db, weekStart) {
     const weekEnd = addDays(weekStart, 7);
     const tsStart = firebase.firestore.Timestamp.fromDate(weekStart);
@@ -493,15 +500,22 @@ document.addEventListener("DOMContentLoaded", async () => {
       .where("start", "<", tsEnd)
       .get();
 
-    const map = new Map();
+    const map = new Map(); // key => { id, ...data, __startDate, __endDate }
+    const list = [];
     snap.forEach((doc) => {
-      const d = doc.data();
+      const d = doc.data() || {};
       const start = d.start?.toDate?.() ? d.start.toDate() : null;
+      const end = d.end?.toDate?.() ? d.end.toDate() : null;
       if (!start) return;
-      const key = `${dateKey(start)}_${String(start.getHours()).padStart(2, "0")}${String(start.getMinutes()).padStart(2, "0")}`;
-      map.set(key, { id: doc.id, ...d });
+
+      const key = keyFromDate(start);
+      const item = { id: doc.id, ...d, __startDate: start, __endDate: end };
+      map.set(key, item);
+      list.push(item);
     });
-    return map;
+
+    list.sort((a, b) => (a.__startDate?.getTime?.() || 0) - (b.__startDate?.getTime?.() || 0));
+    return { map, list };
   }
 
   async function fetchMyAppointments(db, uid) {
@@ -552,27 +566,131 @@ document.addEventListener("DOMContentLoaded", async () => {
     }).join("");
   }
 
+  // ---------- AUTO GRID MODEL (from freeSlots list) ----------
+  function computeGridModelFromFreeSlots(freeList) {
+    // fallback
+    let step = CFG.gridStepFallback;
+    let dayStart = CFG.startMinutesFallback;
+    let dayEnd = CFG.endMinutesFallback;
+
+    if (!freeList || freeList.length < 2) {
+      return { step, dayStart, dayEnd };
+    }
+
+    // calc step = min positive diff between starts (minutes)
+    const starts = freeList
+      .map((x) => x.__startDate)
+      .filter(Boolean)
+      .map((d) => d.getTime())
+      .sort((a, b) => a - b);
+
+    let minDiffMin = Infinity;
+    for (let i = 1; i < starts.length; i++) {
+      const diffMs = starts[i] - starts[i - 1];
+      if (diffMs <= 0) continue;
+      const diffMin = Math.round(diffMs / 60000);
+      if (diffMin > 0 && diffMin < minDiffMin) minDiffMin = diffMin;
+    }
+    if (Number.isFinite(minDiffMin) && minDiffMin > 0) {
+      // clamp to sane values
+      if (minDiffMin < 10) step = 10;
+      else if (minDiffMin > 120) step = 30;
+      else step = minDiffMin;
+    }
+
+    // compute visible dayStart/dayEnd from actual freeSlots bounds
+    const mins = freeList
+      .map((x) => x.__startDate)
+      .filter(Boolean)
+      .map((d) => minutesOfDay(d));
+    if (mins.length) dayStart = Math.min(...mins);
+
+    const ends = freeList
+      .map((x) => x.__endDate || null)
+      .filter(Boolean)
+      .map((d) => minutesOfDay(d));
+    if (ends.length) dayEnd = Math.max(...ends);
+
+    return { step, dayStart, dayEnd };
+  }
+
+  function buildTimeRowsFromModel(model) {
+    const res = [];
+    const step = model.step || CFG.gridStepFallback;
+    const dayStart = model.dayStart ?? CFG.startMinutesFallback;
+    const dayEnd = model.dayEnd ?? CFG.endMinutesFallback;
+
+    // dernier départ = end - bookingMinutes
+    const lastStart = (dayEnd - CFG.bookingMinutes);
+    let mins = dayStart;
+
+    // align mins on step
+    if (mins % step !== 0) mins = mins + (step - (mins % step));
+
+    while (mins <= lastStart) {
+      res.push(mins);
+      mins += step;
+    }
+    return res;
+  }
+
+  function segmentsForBooking(startDate, stepMinutes) {
+    const segs = [];
+    const n = Math.ceil(CFG.bookingMinutes / stepMinutes);
+    let cur = new Date(startDate);
+    for (let i = 0; i < n; i++) {
+      segs.push(new Date(cur));
+      cur = addMinutesDate(cur, stepMinutes);
+    }
+    return segs;
+  }
+
+  function isBusyOverlappingWindow(busyList, startDate, endDate) {
+    // Overlap test: busyStart < end && busyEnd > start
+    const s = startDate.getTime();
+    const e = endDate.getTime();
+    for (const b of busyList) {
+      const bs = b.__startDate?.getTime?.() || 0;
+      const be = b.__endDate?.getTime?.() || bs;
+      if (bs < e && be > s) return true;
+    }
+    return false;
+  }
+
+  // ---------- Booking (transaction) ----------
   async function bookSlot(db, user, selected, note) {
+    // selected.freeSlotDocIds => tous les segments à bloquer
     const apptRef = db.collection("appointments").doc();
     const lockRef = db.collection("slots").doc();
-    const freeRef = db.collection("freeSlots").doc(selected.freeSlotDocId);
 
     const startTs = firebase.firestore.Timestamp.fromDate(selected.startDate);
     const endTs = firebase.firestore.Timestamp.fromDate(selected.endDate);
 
+    const freeRefs = selected.freeSlotDocIds.map((id) => db.collection("freeSlots").doc(id));
+
     await db.runTransaction(async (tx) => {
-      const freeSnap = await tx.get(freeRef);
-      if (!freeSnap.exists) throw new Error("Créneau introuvable (freeSlots).");
+      // 1) check all segments are still free
+      const snaps = [];
+      for (const ref of freeRefs) snaps.push(await tx.get(ref));
 
-      const freeData = freeSnap.data() || {};
-      if (freeData.status !== "free") throw new Error("Ce créneau n’est plus disponible.");
+      for (const s of snaps) {
+        if (!s.exists) throw new Error("Créneau introuvable (freeSlots).");
+        const d = s.data() || {};
+        if (String(d.status || "").toLowerCase() !== "free") {
+          throw new Error("Ce créneau n’est plus disponible.");
+        }
+      }
 
-      tx.update(freeRef, {
-        status: "blocked",
-        blockedReason: "booking",
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      });
+      // 2) block all segments
+      for (const ref of freeRefs) {
+        tx.update(ref, {
+          status: "blocked",
+          blockedReason: "booking",
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        });
+      }
 
+      // 3) create appointment
       tx.set(apptRef, {
         uid: user.uid,
         email: (user.email || "").toLowerCase(),
@@ -583,6 +701,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
 
+      // 4) create lock
       tx.set(lockRef, {
         uid: user.uid,
         start: startTs,
@@ -623,111 +742,127 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // Calendar state
   let currentWeekStart = startOfWeekMonday(new Date());
-  let selectedSlot = null; // { key, startDate, endDate, freeSlotDocId }
-  let lastFreeSlotsMap = new Map();
+  let selectedSlot = null; // { key, startDate, endDate, freeSlotDocIds: [] }
+  let lastFreeSlots = { map: new Map(), list: [] };
 
   async function refreshCalendarAndAppointments(user) {
-    const timeRows = buildTimeRows();
     const days = makeWeekDays(currentWeekStart);
 
-    const calSub = document.getElementById("calSub");
     const calTitle = document.getElementById("calTitle");
+    const calSub = document.getElementById("calSub");
     if (calTitle) calTitle.textContent = `Semaine du ${days[0].toLocaleDateString()}`;
-    if (calSub) calSub.textContent = `Créneaux: ${CFG.slotMinutes} min (RDV ${CFG.appointmentMinutes} + trajet)`;
+    if (calSub) calSub.textContent = `Créneaux: ${CFG.bookingMinutes} min (RDV ${CFG.appointmentMinutes} + trajet)`;
 
-    // --- freeSlots ---
+    // --- load freeSlots ---
     try {
-      lastFreeSlotsMap = await fetchFreeSlotsForWeek(db, currentWeekStart);
+      lastFreeSlots = await fetchFreeSlotsForWeek(db, currentWeekStart);
     } catch (e) {
       console.error(e);
       if (!isProbablyAdblockNetworkError(e)) showBanner("alert", "Impossible de charger les créneaux (réseau / rules).");
-      lastFreeSlotsMap = new Map();
+      lastFreeSlots = { map: new Map(), list: [] };
     }
 
-    // --- busySlots ---
-    let busyMap = new Map();
+    // --- load busySlots ---
+    let busy = { map: new Map(), list: [] };
     try {
-      busyMap = await fetchBusySlotsForWeek(db, currentWeekStart);
+      busy = await fetchBusySlotsForWeek(db, currentWeekStart);
     } catch (e) {
       console.error(e);
-      busyMap = new Map();
+      busy = { map: new Map(), list: [] };
     }
 
+    // --- build grid model from data ---
+    const model = computeGridModelFromFreeSlots(lastFreeSlots.list);
+    const timeRows = buildTimeRowsFromModel(model);
+
+    // --- compute states ---
     const slotStateByKey = new Map();
     const now = new Date();
+    const min48 = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+    const step = model.step || CFG.gridStepFallback;
 
     for (const day of days) {
       for (const mins of timeRows) {
         const start = new Date(day);
         start.setHours(0, 0, 0, 0);
         start.setMinutes(mins);
+        const key = keyFromDate(start);
 
-        const key = `${dateKey(start)}_${String(start.getHours()).padStart(2, "0")}${String(start.getMinutes()).padStart(2, "0")}`;
+        const end = addMinutesDate(start, CFG.bookingMinutes);
 
-        const freeDoc = lastFreeSlotsMap.get(key);
-        const busyDoc = busyMap.get(key);
-
+        // base
         let status = "blocked";
         let disabled = true;
         let title = "";
-        const label = "";
+        let label = "";
 
-        // base: freeSlots
-        if (freeDoc) {
-          status = freeDoc.status || "blocked";
-          disabled = status !== "free";
-
-          const br = String(freeDoc.blockedReason || "").toLowerCase();
-          if (status === "blocked") {
-            if (br === "outlook") title = "Indisponible (Outlook)";
-            else if (br === "validated") title = "Indisponible (validé)";
-            else if (br === "booking") title = "Indisponible";
-            else title = "Indisponible";
-          }
-          if (status === "free") title = "Disponible";
-        } else {
-          title = "Non généré (admin)";
-        }
-
-        // règle 48h UI
-        const min48 = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+        // <48h
         if (start < min48) {
+          status = "blocked";
           disabled = true;
-          if (freeDoc && freeDoc.status === "free") title = "Indisponible (<48h)";
+          title = "Indisponible (<48h)";
+          slotStateByKey.set(key, { status, disabled, title, label });
+          continue;
         }
 
-        // ✅ priorité absolue: busySlots => occupé
-        if (busyDoc) {
+        // busy overlap window => blocked
+        if (busy?.list?.length && isBusyOverlappingWindow(busy.list, start, end)) {
           status = "blocked";
           disabled = true;
           title = "Indisponible (occupé)";
+          slotStateByKey.set(key, { status, disabled, title, label });
+          continue;
         }
 
-        // sélection (seulement si pas busy)
+        // can we cover 90 min with consecutive freeSlots segments?
+        const segStarts = segmentsForBooking(start, step);
+        const neededDocs = [];
+        let ok = true;
+
+        for (const segStart of segStarts) {
+          const segKey = keyFromDate(segStart);
+          const doc = lastFreeSlots.map.get(segKey);
+
+          if (!doc) { ok = false; break; }
+          const st = String(doc.status || "").toLowerCase();
+          if (st !== "free") { ok = false; break; }
+
+          // si c'est "free" mais marqué conflict/outlook par des champs annexes : on respecte status
+          neededDocs.push(doc.id);
+        }
+
+        if (ok) {
+          status = "free";
+          disabled = false;
+          title = "Disponible";
+          label = "Libre";
+        } else {
+          status = "blocked";
+          disabled = true;
+          title = "Indisponible";
+        }
+
+        // selected
         if (selectedSlot && selectedSlot.key === key) {
-          if (!busyDoc) {
-            status = "selected";
-            disabled = false;
-            title = "Sélectionné";
-          } else {
-            // si devient busy -> annule la sélection
-            selectedSlot = null;
-          }
+          status = "selected";
+          disabled = false;
+          title = "Sélectionné";
         }
 
-        slotStateByKey.set(key, { status, disabled, title, label });
+        slotStateByKey.set(key, { status, disabled, title, label, __neededDocs: neededDocs });
       }
     }
 
-    renderCalendarGrid(currentWeekStart, days, timeRows, slotStateByKey);
+    renderCalendarGrid(days, timeRows, slotStateByKey);
 
+    // click handlers
     document.querySelectorAll(".slot[data-slotkey]").forEach((cell) => {
       cell.addEventListener("click", async () => {
         hideBanner();
-
         const key = cell.getAttribute("data-slotkey");
         if (!key) return;
 
+        // toggle off
         if (selectedSlot && selectedSlot.key === key) {
           selectedSlot = null;
           const b = document.getElementById("btnBook");
@@ -736,29 +871,30 @@ document.addEventListener("DOMContentLoaded", async () => {
           return;
         }
 
-        const freeDoc = lastFreeSlotsMap.get(key);
-        if (!freeDoc || freeDoc.status !== "free") return;
+        const st = slotStateByKey.get(key);
+        if (!st || st.disabled) return;
 
+        // parse key => Date
         const [dPart, hm] = key.split("_");
         const [yy, mo, dd] = dPart.split("-").map((x) => parseInt(x, 10));
         const hh = parseInt(hm.slice(0, 2), 10);
         const mm = parseInt(hm.slice(2, 4), 10);
         const start = new Date(yy, (mo - 1), dd, hh, mm, 0, 0);
-        const end = addMinutesDate(start, CFG.slotMinutes);
+        const end = addMinutesDate(start, CFG.bookingMinutes);
 
-        const min48 = new Date(Date.now() + 48 * 60 * 60 * 1000);
-        if (start < min48) {
-          showBanner("warn", "Ce créneau est à moins de 48h : réservation impossible.");
-          return;
-        }
+        // need doc ids for all segments
+        const needed = st.__neededDocs || [];
+        if (!needed.length) return;
 
-        selectedSlot = { key, startDate: start, endDate: end, freeSlotDocId: freeDoc.id };
+        selectedSlot = { key, startDate: start, endDate: end, freeSlotDocIds: needed };
+
         const b = document.getElementById("btnBook");
         if (b) b.disabled = false;
         await refreshCalendarAndAppointments(user);
       });
     });
 
+    // appointments list
     try {
       const list = await fetchMyAppointments(db, user.uid);
       renderAppointments(list);
@@ -795,16 +931,21 @@ document.addEventListener("DOMContentLoaded", async () => {
     document.getElementById("btnBook")?.addEventListener("click", async () => {
       hideBanner();
       const btnBook = document.getElementById("btnBook");
+
       if (!selectedSlot) {
         showBanner("alert", "Veuillez sélectionner un créneau.");
         return;
       }
+
       try {
         if (btnBook) btnBook.disabled = true;
+
         const note = (document.getElementById("apptNote")?.value || "").trim();
         await bookSlot(db, user, selectedSlot, note);
+
         showBanner("ok", "Demande envoyée ✅ (en attente de validation)");
         selectedSlot = null;
+
         if (btnBook) btnBook.disabled = true;
         await refreshCalendarAndAppointments(user);
       } catch (e) {
@@ -873,6 +1014,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
           renderBookingShell(user.email || "");
           selectedSlot = null;
+
           const b = document.getElementById("btnBook");
           if (b) b.disabled = true;
 
@@ -896,6 +1038,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     renderBookingShell(user.email || "");
     selectedSlot = null;
+
     const b = document.getElementById("btnBook");
     if (b) b.disabled = true;
 
