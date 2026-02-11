@@ -1,4 +1,4 @@
-name: Generate freeSlots (daily)
+name: Reset DB + Generate freeSlots (daily)
 
 on:
   workflow_dispatch:
@@ -27,14 +27,16 @@ jobs:
         working-directory: tools/slot-generator
         run: npm install
 
-      # ✅ IMPORTANT : forcer le fuseau Belgique (sinon UTC => slots décalés)
-      - name: Cleanup freeSlots (RESET)
+      # ✅ RESET TOTAL (sans toucher admins / settings)
+      - name: Reset DB (keep admins + settings)
         working-directory: tools/slot-generator
         env:
           FIREBASE_PROJECT_ID: "goffin-booking-web"
           TZ: "Europe/Brussels"
-        run: node cleanup-freeSlots.js
+          ADMIN_UID: "${{ secrets.ADMIN_UID }}"
+        run: node reset-all.js
 
+      # ✅ Génère ensuite les freeSlots (sur base clean)
       - name: Run generator
         working-directory: tools/slot-generator
         env:
