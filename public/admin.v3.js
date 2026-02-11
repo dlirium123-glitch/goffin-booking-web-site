@@ -1,17 +1,17 @@
 /* ===============================
    Admin — Goffin Booking (v3)
-   Signature version + anti-cache
+   Version: 2026-02-10
    =============================== */
 /* eslint-disable no-console */
-const ADMIN_VERSION = "admin-2026-02-07-3";
+const ADMIN_VERSION = "admin-2026-02-10-2";
 console.log("admin.v3.js chargé ✅", ADMIN_VERSION);
 
 document.addEventListener("DOMContentLoaded", async () => {
-  // UI version (dans admin.html : <span id="adminVersion">—</span>)
+  // UI version
   const vEl = document.getElementById("adminVersion");
   if (vEl) vEl.textContent = ADMIN_VERSION;
 
-  // Attendre que Firebase soit prêt (init.js + compat libs)
+  // Wait Firebase compat + init
   async function waitForFirebase(maxMs = 10000) {
     const t0 = Date.now();
     while (Date.now() - t0 < maxMs) {
@@ -44,59 +44,45 @@ document.addEventListener("DOMContentLoaded", async () => {
   const slotsCol = db.collection("slots"); // locks privés
   const freeSlotsCol = db.collection("freeSlots"); // planning public
 
-  // DOM
+  // DOM (essentiels)
   const pill = document.getElementById("pillStatus");
   const statusText = document.getElementById("statusText");
   const btnLogin = document.getElementById("btnLogin");
   const btnLogout = document.getElementById("btnLogout");
+  const overlay = document.getElementById("overlay");
+  const loginErr = document.getElementById("loginErr");
 
+  // DOM (appointments)
   const apptList = document.getElementById("apptList");
   const apptEmpty = document.getElementById("apptEmpty");
   const apptMsg = document.getElementById("apptMsg");
   const apptOk = document.getElementById("apptOk");
 
+  // DOM (modifs) — optionnels (selon ton admin.html)
   const modifList = document.getElementById("modifList");
   const modifEmpty = document.getElementById("modifEmpty");
   const modifMsg = document.getElementById("modifMsg");
   const modifOk = document.getElementById("modifOk");
 
-  const overlay = document.getElementById("overlay");
-  const loginErr = document.getElementById("loginErr");
-
+  // DOM (freeSlots generation) — optionnels
   const btnGenFreeSlots = document.getElementById("btnGenFreeSlots");
   const btnGenPreview = document.getElementById("btnGenPreview");
   const slotsMsg = document.getElementById("slotsMsg");
   const slotsOk = document.getElementById("slotsOk");
 
-  // Hard-stop si DOM essentiel manquant
-  const required = [
-    pill,
-    statusText,
-    btnLogin,
-    btnLogout,
-    apptList,
-    apptEmpty,
-    apptMsg,
-    apptOk,
-    modifList,
-    modifEmpty,
-    modifMsg,
-    modifOk,
-    overlay,
-    loginErr,
-    btnGenFreeSlots,
-    btnGenPreview,
-    slotsMsg,
-    slotsOk,
-  ];
-  if (required.some((x) => !x)) {
-    console.error("DOM manquant dans admin.html (un ou plusieurs IDs requis introuvables).");
+  // DOM (planning semaine) — optionnel
+  const planningGrid = document.getElementById("planningGrid");
+
+  // Hard-stop uniquement si le minimum vital manque
+  const mustHave = [pill, statusText, btnLogin, btnLogout, overlay, loginErr, apptList, apptEmpty, apptMsg, apptOk];
+  if (mustHave.some((x) => !x)) {
+    console.error("admin.html: IDs essentiels manquants (pill/status/login/appointments).");
     return;
   }
 
   let isAdmin = false;
 
-  // ====== CONFIG (cohérente index) ======
+  // ====== CONFIG ======
   const SLOT_MINUTES = 90;
   const DAY_START_MIN = 9 * 60 + 30; // 09:30
   const DAY_END_MIN = 17 * 60 + 30; // 17:30
@@ -124,35 +110,42 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   function showErr(el, t) {
+    if (!el) return;
     el.style.display = "block";
     el.textContent = t;
   }
   function hideErr(el) {
+    if (!el) return;
     el.style.display = "none";
     el.textContent = "";
   }
   function showOk(el, t) {
+    if (!el) return;
     el.style.display = "block";
     el.textContent = t;
   }
   function hideOk(el) {
+    if (!el) return;
     el.style.display = "none";
     el.textContent = "";
   }
 
   function showSlotsErr(t) {
+    if (!slotsMsg || !slotsOk) return;
     slotsMsg.style.display = "block";
     slotsMsg.textContent = t;
     slotsOk.style.display = "none";
     slotsOk.textContent = "";
   }
   function showSlotsOk(t) {
+    if (!slotsMsg || !slotsOk) return;
     slotsOk.style.display = "block";
     slotsOk.textContent = t;
     slotsMsg.style.display = "none";
     slotsMsg.textContent = "";
   }
   function clearSlotsMsg() {
+    if (!slotsMsg || !slotsOk) return;
     slotsMsg.style.display = "none";
     slotsMsg.textContent = "";
     slotsOk.style.display = "none";
@@ -227,7 +220,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   // ==========================================================
-  // ✅ verrouillage "VALIDATED" dans freeSlots (immuable)
+  // ✅ verrouillage "VALIDATED" dans freeSlots (prioritaire)
   // ==========================================================
   async function markFreeSlotAsValidated(appt) {
     const start = appt.start?.toDate ? appt.start.toDate() : null;
@@ -246,14 +239,12 @@ document.addEventListener("DOMContentLoaded", async () => {
         updatedAt: FieldValue.serverTimestamp(),
       };
 
-      // On ne perd jamais start/end
       if (!snap.exists) {
         payload.start = firebase.firestore.Timestamp.fromDate(start);
         payload.end = firebase.firestore.Timestamp.fromDate(end || addMinutes(start, SLOT_MINUTES));
         payload.createdAt = FieldValue.serverTimestamp();
       }
 
-      // si Outlook avait déjà bloqué, on force validated (prioritaire)
       tx.set(freeRef, payload, { merge: true });
     });
   }
@@ -276,7 +267,6 @@ document.addEventListener("DOMContentLoaded", async () => {
       const reason = String(d.blockedReason || "").toLowerCase();
       const status = String(d.status || "").toLowerCase();
 
-      // jamais libérer si outlook / validated
       if (status === "blocked" && (reason === BLOCK_REASON.OUTLOOK || reason === BLOCK_REASON.VALIDATED)) return;
 
       tx.set(
@@ -290,9 +280,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       );
     });
 
-    // Supprime locks slots liés à cet appointmentId
+    // supprimer locks slots liés à l’appointmentId
     const lockSnap = await slotsCol.where("appointmentId", "==", appt.id).limit(25).get();
-
     const batch = db.batch();
     lockSnap.forEach((doc) => batch.delete(doc.ref));
     await batch.commit();
@@ -310,18 +299,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     let cancelNote = "";
-    if (askNote) {
-      cancelNote = (window.prompt("Note (optionnel) :", "") || "").trim();
-    }
+    if (askNote) cancelNote = (window.prompt("Note (optionnel) :", "") || "").trim();
 
     const isLate = newStatus === "cancelled" ? computeLateCancel(appt.start) : false;
 
     try {
-      // 1) update appointment
-      const payload = {
-        status: newStatus,
-        updatedAt: FieldValue.serverTimestamp(),
-      };
+      const payload = { status: newStatus, updatedAt: FieldValue.serverTimestamp() };
 
       if (newStatus === "cancelled") {
         payload.cancelledAt = firebase.firestore.Timestamp.now();
@@ -331,15 +314,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       await appointmentsCol.doc(appt.id).set(payload, { merge: true });
 
-      // 2) side-effects
-      if (newStatus === "validated") {
-        await markFreeSlotAsValidated(appt);
-      }
-      if (releaseOnChange) {
-        await releaseSlotForAppointment(appt);
-      }
+      if (newStatus === "validated") await markFreeSlotAsValidated(appt);
+      if (releaseOnChange) await releaseSlotForAppointment(appt);
 
-      // 3) UI message
       if (newStatus === "validated") {
         showOk(apptOk, "Rendez-vous validé ✅ (slot verrouillé: validated)");
       } else if (newStatus === "refused") {
@@ -354,6 +331,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
 
       await refreshAppointments();
+      await refreshPlanningWeek();
     } catch (e) {
       console.error(e);
       showErr(apptMsg, "Impossible d’appliquer l’action (droits, réseau, ou rules).");
@@ -487,10 +465,7 @@ document.addEventListener("DOMContentLoaded", async () => {
               : "Confirmer l’annulation ? Le créneau sera libéré (si pas Outlook/validated).";
             if (!window.confirm(warning)) return;
 
-            return setStatusWithSideEffects(appt, "cancelled", {
-              releaseOnChange: true,
-              askNote: true,
-            });
+            return setStatusWithSideEffects(appt, "cancelled", { releaseOnChange: true, askNote: true });
           }
         });
       });
@@ -503,6 +478,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // ====== DATA (modifs) ======
   async function loadModifs(filter) {
+    if (!modifList) return [];
     let q = modifsCol.limit(200);
     if (filter !== "all") q = modifsCol.where("status", "==", filter).limit(200);
 
@@ -518,9 +494,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     return items;
   }
 
-  // ✅ MISSING FUNCTION (fix)
   async function refreshModifs() {
-    if (!isAdmin) return;
+    if (!isAdmin || !modifList) return;
 
     hideErr(modifMsg);
     hideOk(modifOk);
@@ -528,14 +503,14 @@ document.addEventListener("DOMContentLoaded", async () => {
     const filter = document.getElementById("modifFilter")?.value || "new";
 
     modifList.innerHTML = `<div class="muted">Chargement…</div>`;
-    modifEmpty.style.display = "none";
+    if (modifEmpty) modifEmpty.style.display = "none";
 
     try {
       const items = await loadModifs(filter);
 
       if (!items.length) {
         modifList.innerHTML = "";
-        modifEmpty.style.display = "block";
+        if (modifEmpty) modifEmpty.style.display = "block";
         return;
       }
 
@@ -727,30 +702,160 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     const { written, skipped } = await commitBatchesSafe(docs, existing);
     showSlotsOk(`Génération OK ✅ ${written} écrits / ${skipped} ignorés (déjà bloqués outlook/validated).`);
+    await refreshPlanningWeek();
   }
 
-  btnGenPreview.addEventListener("click", () => generateFreeSlots(WEEKS, true));
-  btnGenFreeSlots.addEventListener("click", async () => {
-    if (!confirm(`Générer les freeSlots sur ${WEEKS} semaines (90 min) ?\n⚠️ Ne remplacera pas les slots bloqués (outlook/validated).`)) return;
-    try {
-      await generateFreeSlots(WEEKS, false);
-    } catch (e) {
-      console.error(e);
-      showSlotsErr("Erreur pendant la génération (droits/réseau).");
+  // bind boutons generation si présents
+  if (btnGenPreview) btnGenPreview.addEventListener("click", () => generateFreeSlots(WEEKS, true));
+  if (btnGenFreeSlots)
+    btnGenFreeSlots.addEventListener("click", async () => {
+      if (
+        !confirm(
+          `Générer les freeSlots sur ${WEEKS} semaines (90 min) ?\n⚠️ Ne remplacera pas les slots bloqués (outlook/validated).`
+        )
+      )
+        return;
+      try {
+        await generateFreeSlots(WEEKS, false);
+      } catch (e) {
+        console.error(e);
+        showSlotsErr("Erreur pendant la génération (droits/réseau).");
+      }
+    });
+
+  // ====== PLANNING SEMAINE (lecture seule depuis freeSlots) ======
+  function mondayOfWeek(d) {
+    const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const day = x.getDay(); // 0=dim,1=lun
+    const diff = day === 0 ? -6 : 1 - day;
+    x.setDate(x.getDate() + diff);
+    x.setHours(0, 0, 0, 0);
+    return x;
+  }
+
+  function minutesToLabel(mins) {
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return `${pad2(h)}:${pad2(m)}`;
+  }
+
+  function slotClassFromDoc(d) {
+    const status = String(d.status || "free").toLowerCase();
+    const reason = String(d.blockedReason || "").toLowerCase();
+    const conflict = d.conflict === true;
+
+    if (conflict) return "conflict";
+    if (status === "blocked") {
+      if (reason === BLOCK_REASON.VALIDATED) return "validated";
+      return "blocked";
     }
-  });
+    if (status === "pending") return "pending";
+    if (status === "validated") return "validated";
+    return "free";
+  }
+
+  async function refreshPlanningWeek() {
+    if (!planningGrid) return;
+    if (!isAdmin) {
+      planningGrid.innerHTML = `<div class="muted">Connecte-toi pour voir le planning.</div>`;
+      return;
+    }
+
+    const now = new Date();
+    const mon = mondayOfWeek(now);
+    const fri = new Date(mon);
+    fri.setDate(mon.getDate() + 5); // lundi + 5 jours = samedi 00:00
+    const fromTs = firebase.firestore.Timestamp.fromDate(mon);
+    const toTs = firebase.firestore.Timestamp.fromDate(fri);
+
+    planningGrid.innerHTML = `<div class="muted">Chargement planning…</div>`;
+
+    let map = new Map();
+    try {
+      const snap = await freeSlotsCol.where("start", ">=", fromTs).where("start", "<", toTs).get();
+      snap.forEach((doc) => map.set(doc.id, doc.data() || {}));
+    } catch (e) {
+      console.warn("Planning: query freeSlots (index start?)", e);
+      planningGrid.innerHTML = `<div class="muted">Index Firestore manquant pour afficher le planning.</div>`;
+      return;
+    }
+
+    const days = ["Lun", "Mar", "Mer", "Jeu", "Ven"];
+    const cols = [];
+    for (let d = 0; d < 5; d++) {
+      const day = new Date(mon);
+      day.setDate(mon.getDate() + d);
+      cols.push(day);
+    }
+
+    // Build time slots for day
+    const timeSlots = [];
+    for (let mins = DAY_START_MIN; mins <= LAST_START_MIN; mins += SLOT_MINUTES) {
+      timeSlots.push(mins);
+    }
+
+    // Render grid: first row header
+    let html = "";
+
+    // Header row (blank + days)
+    html += `<div class="timeCell"></div>`;
+    cols.forEach((day, i) => {
+      const dd = pad2(day.getDate());
+      const mm = pad2(day.getMonth() + 1);
+      html += `<div class="slot" style="justify-content:center;background:#f8fafc">${days[i]} ${dd}/${mm}</div>`;
+    });
+
+    // Rows
+    timeSlots.forEach((mins) => {
+      html += `<div class="timeCell">${minutesToLabel(mins)}</div>`;
+
+      cols.forEach((day) => {
+        const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0, 0);
+        start.setMinutes(mins);
+        const id = freeSlotIdFromDate(start);
+
+        const d = map.get(id);
+        if (!d) {
+          html += `<div class="slot free" style="opacity:.55">—</div>`;
+          return;
+        }
+
+        const cls = slotClassFromDoc(d);
+
+        let label = "Libre";
+        const status = String(d.status || "free").toLowerCase();
+        const reason = String(d.blockedReason || "").toLowerCase();
+        const conflict = d.conflict === true;
+
+        if (conflict) label = "⚠ Conflit";
+        else if (status === "blocked" && reason === BLOCK_REASON.VALIDATED) label = "Validé";
+        else if (status === "blocked" && reason === BLOCK_REASON.OUTLOOK) label = "Occupé (Outlook)";
+        else if (status === "blocked") label = "Bloqué";
+        else if (status === "pending") label = "En attente";
+
+        html += `<div class="slot ${cls}">${label}</div>`;
+      });
+    });
+
+    planningGrid.innerHTML = html;
+  }
 
   // ========= UI EVENTS =========
-  document.getElementById("btnRefresh")?.addEventListener("click", refreshAppointments);
-  document.getElementById("btnRefreshModifs")?.addEventListener("click", refreshModifs);
+  document.getElementById("btnRefresh")?.addEventListener("click", async () => {
+    await refreshAppointments();
+    await refreshPlanningWeek();
+  });
   document.getElementById("statusFilter")?.addEventListener("change", refreshAppointments);
-  document.getElementById("modifFilter")?.addEventListener("change", refreshModifs);
 
   let _debounce = null;
   document.getElementById("search")?.addEventListener("input", () => {
     clearTimeout(_debounce);
     _debounce = setTimeout(refreshAppointments, 250);
   });
+
+  // Modifs events si présents
+  document.getElementById("btnRefreshModifs")?.addEventListener("click", refreshModifs);
+  document.getElementById("modifFilter")?.addEventListener("change", refreshModifs);
 
   // ========= LOGIN MODAL =========
   function openLogin() {
@@ -815,7 +920,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (!user) {
       setStatus(false);
       apptList.innerHTML = `<div class="muted">Veuillez vous connecter.</div>`;
-      modifList.innerHTML = `<div class="muted">Veuillez vous connecter.</div>`;
+      if (modifList) modifList.innerHTML = `<div class="muted">Veuillez vous connecter.</div>`;
+      await refreshPlanningWeek();
       return;
     }
 
@@ -829,7 +935,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (!ok) {
       setStatus(false);
       apptList.innerHTML = `<div class="muted"><b>Accès refusé</b> : ce compte n’est pas administrateur.<br/>Retour à l’accueil…</div>`;
-      modifList.innerHTML = `<div class="muted"><b>Accès refusé</b> : ce compte n’est pas administrateur.<br/>Retour à l’accueil…</div>`;
+      if (modifList)
+        modifList.innerHTML = `<div class="muted"><b>Accès refusé</b> : ce compte n’est pas administrateur.<br/>Retour à l’accueil…</div>`;
       setTimeout(() => {
         window.location.href = "/";
       }, 2000);
@@ -840,5 +947,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     setStatus(true);
     await refreshAppointments();
     await refreshModifs();
+    await refreshPlanningWeek();
   });
 });
