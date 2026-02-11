@@ -1,4 +1,4 @@
-name: Reset DB + Generate freeSlots (daily)
+name: Generate freeSlots (daily)
 
 on:
   workflow_dispatch:
@@ -27,16 +27,6 @@ jobs:
         working-directory: tools/slot-generator
         run: npm install
 
-      # ✅ RESET TOTAL (sans toucher admins / settings)
-      - name: Reset DB (keep admins + settings)
-        working-directory: tools/slot-generator
-        env:
-          FIREBASE_PROJECT_ID: "goffin-booking-web"
-          TZ: "Europe/Brussels"
-          ADMIN_UID: "${{ secrets.ADMIN_UID }}"
-        run: node reset-all.js
-
-      # ✅ Génère ensuite les freeSlots (sur base clean)
       - name: Run generator
         working-directory: tools/slot-generator
         env:
