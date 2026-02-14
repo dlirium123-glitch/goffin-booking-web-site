@@ -1,3 +1,8 @@
+/* ===========================
+   index.css — Goffin Booking
+   Version desktop-pro (mobile-safe)
+   =========================== */
+
 :root{
   --brand:#0b3a6e;
   --brand2:#1b5fa8;
@@ -10,6 +15,22 @@
   --warn:#b45309;
   --shadow:0 10px 25px rgba(0,0,0,.08);
   --radius:14px;
+
+  /* Calendrier */
+  --cal-bg:#ffffff;
+  --cal-head:#f8fafc;
+  --cal-grid:#e5e7eb;
+  --cal-text:#0f172a;
+  --cal-muted:#6b7280;
+
+  --cal-free-bg:#ecfdf5;
+  --cal-free-bd:#bbf7d0;
+  --cal-block-bg:#f3f4f6;
+  --cal-block-bd:#e5e7eb;
+  --cal-sel-bg:#dbeafe;
+  --cal-sel-bd:#93c5fd;
+
+  --cal-hover: rgba(27,95,168,.10);
 }
 
 *{box-sizing:border-box}
@@ -193,6 +214,7 @@ input:focus, select:focus, textarea:focus{
 .badge.refused{border-color:#f2c2c2;background:#fff5f5;color:var(--danger)}
 .badge.cancelled{border-color:#e5e7eb;background:#f9fafb;color:#374151}
 
+/* Mobile */
 @media (max-width: 920px){
   .grid{grid-template-columns:1fr}
   main{margin-top:-10px}
@@ -202,22 +224,6 @@ input:focus, select:focus, textarea:focus{
 /* ===========================
    CALENDRIER — STYLE MODERNE
    =========================== */
-:root{
-  --cal-bg:#ffffff;
-  --cal-head:#f8fafc;
-  --cal-grid:#e5e7eb;
-  --cal-text:#0f172a;
-  --cal-muted:#6b7280;
-
-  --cal-free-bg:#ecfdf5;
-  --cal-free-bd:#bbf7d0;
-  --cal-block-bg:#f3f4f6;
-  --cal-block-bd:#e5e7eb;
-  --cal-sel-bg:#dbeafe;
-  --cal-sel-bd:#93c5fd;
-
-  --cal-hover: rgba(27,95,168,.10);
-}
 
 .calHeader{
   display:flex;
@@ -377,10 +383,12 @@ input:focus, select:focus, textarea:focus{
 }
 
 /* ===========================
-   DESKTOP PREMIUM (mobile-safe)
+   DESKTOP PRO (mobile-safe)
+   - corrige la superposition (z-index)
+   - rend plus “dashboard” sans casser mobile
    =========================== */
 
-/* 1) écrans moyens : on élargit un peu et on densifie */
+/* Écrans moyens : on densifie un peu */
 @media (min-width: 900px){
   header{
     padding:16px 18px; /* moins haut = moins de bande bleue */
@@ -388,11 +396,11 @@ input:focus, select:focus, textarea:focus{
 
   main{
     max-width: 1180px;     /* plus large sur desktop */
-    margin: -40px auto 44px;
+    margin: -18px auto 44px; /* ✅ évite la superposition sur le titre */
   }
 
   .grid{
-    grid-template-columns: 1.15fr 0.85fr; /* meilleur équilibre */
+    grid-template-columns: 1.15fr 0.85fr;
     align-items: start;
   }
 
@@ -405,21 +413,30 @@ input:focus, select:focus, textarea:focus{
   }
 }
 
-/* 2) grand desktop : vraie sensation "dashboard" */
+/* Grand desktop : look premium + bande bleue plus courte */
 @media (min-width: 1200px){
+  /* ✅ empêche les cartes de passer sur le header */
+  header{
+    position: relative;
+    z-index: 10;
+  }
+  main{
+    position: relative;
+    z-index: 1;
+  }
+
   body{
-    /* garde ton style, mais réduit l’impression de vide */
     background: linear-gradient(
       180deg,
       #0b3a6e 0%,
-      #0b3a6e 140px,   /* ↓ avant c’était 180px */
+      #0b3a6e 140px,
       var(--bg) 140px
     );
   }
 
   main{
     max-width: 1260px;
-    margin: -55px auto 52px;
+    margin: -22px auto 52px; /* ✅ remonte un peu, mais sans chevaucher */
   }
 
   .grid{
@@ -427,83 +444,32 @@ input:focus, select:focus, textarea:focus{
     gap: 18px;
   }
 
-  /* cartes plus "premium" */
   .card{
     border-radius: 18px;
     box-shadow: 0 14px 34px rgba(0,0,0,.10);
     border-color: rgba(219,227,240,.95);
   }
 
-  /* La carte de droite (connexion) doit paraître plus importante */
+  /* sticky du panneau droit seulement si rightPanel a la classe card (ce qui est ton cas) */
   #rightPanel.card{
     position: sticky;
-    top: 18px;          /* reste visible */
+    top: 18px;
   }
 
-  /* densifier la zone actions */
   .actionBox{
     grid-template-columns: 1fr 1fr;
     gap: 12px;
   }
 
-  /* boutons un peu plus "app" */
-  .btn{
-    border-radius: 12px;
-  }
+  .btn,
   .btnTop{
     border-radius: 12px;
   }
 }
 
-/* 3) ultra-large : on évite les lignes trop longues */
+/* Ultra-large : largeur max raisonnable */
 @media (min-width: 1600px){
   main{
     max-width: 1320px;
-  }
-}
-
-/* ===========================
-   DESKTOP ALIGN PRO FIX
-   =========================== */
-@media (min-width: 980px){
-
-  /* même largeur exacte header + main */
-  .topbar,
-  main{
-    max-width: 1200px;
-  }
-
-  /* structure plus stable */
-  .grid{
-    grid-template-columns: 1fr 440px; /* colonne droite fixe */
-    align-items: stretch;             /* ← important */
-  }
-
-  /* force les cartes à démarrer au même niveau */
-  .card{
-    height: 100%;
-  }
-
-  /* carte droite plus compacte et plus premium */
-  #rightPanel.card{
-    align-self: start;
-    padding: 20px;
-    border-radius: 18px;
-    box-shadow: 0 18px 40px rgba(0,0,0,.12);
-  }
-
-  /* espace visuel sous les cartes réduit */
-  main{
-    margin: -48px auto 60px;
-  }
-
-  /* bande bleue encore un peu plus courte */
-  body{
-    background: linear-gradient(
-      180deg,
-      #0b3a6e 0%,
-      #0b3a6e 120px,
-      var(--bg) 120px
-    );
   }
 }
