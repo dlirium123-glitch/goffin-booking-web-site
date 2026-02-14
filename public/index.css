@@ -1,26 +1,34 @@
 /* ===========================
-   GOFFIN BOOKING — INDEX CSS
-   Mobile-first, 1 colonne partout
+   GOFFIN BOOKING — index.css
+   Mobile-first / 1 colonne partout
    =========================== */
 
+/* ---------- TOKENS ---------- */
 :root{
   --brand:#0b3a6e;
   --brand2:#1b5fa8;
+
   --bg:#f5f7fb;
   --card:#ffffff;
+  --text:#0f172a;
   --muted:#6b7280;
   --line:#dbe3f0;
+
   --ok:#16a34a;
   --danger:#8a1f1f;
   --warn:#b45309;
 
   --shadow: 0 14px 34px rgba(0,0,0,.10);
-  --radius: 16px;
+  --shadowSoft: 0 10px 25px rgba(0,0,0,.08);
+  --radius:16px;
 
-  --wrap: 720px;       /* largeur max "téléphone/colonne unique" */
-  --wrapWide: 860px;   /* si tu veux un peu plus large sur très grand écran */
+  --wrap: 720px;    /* largeur “pro” centrée */
+  --gap: 14px;
+
+  --headerH: 160px; /* hauteur visuelle du header bleu */
 }
 
+/* ---------- BASE ---------- */
 *{ box-sizing:border-box; }
 
 html, body{
@@ -30,23 +38,17 @@ html, body{
 body{
   margin:0;
   font-family: Arial, Helvetica, sans-serif;
-  color:#0f172a;
-
-  /* Un seul bandeau bleu propre + fond clair (pas de superpositions) */
-  background: linear-gradient(
-    180deg,
-    var(--brand) 0%,
-    var(--brand) 120px,
-    var(--bg) 120px
-  );
+  color:var(--text);
+  background:
+    linear-gradient(180deg, var(--brand) 0%, var(--brand) var(--headerH), var(--bg) var(--headerH));
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* ===========================
-   HEADER
-   =========================== */
+/* ---------- HEADER ---------- */
 header{
   color:#fff;
-  padding:18px 16px 14px;
+  padding:18px 16px;
 }
 
 .topbar{
@@ -64,30 +66,28 @@ header{
   letter-spacing:.2px;
   line-height:1.2;
 }
-
 .brand p{
   margin:6px 0 0;
   opacity:.92;
-  font-size:12.5px;
-  line-height:1.35;
+  font-size:12.8px;
 }
 
 .status{
   display:flex;
   align-items:center;
-  gap:10px;
   justify-content:flex-end;
   flex-wrap:wrap;
+  gap:10px;
 }
 
 .pill{
   display:inline-flex;
   align-items:center;
   gap:8px;
+  border:1px solid rgba(255,255,255,.25);
   padding:8px 10px;
   border-radius:999px;
   font-size:12px;
-  border:1px solid rgba(255,255,255,.25);
   background:rgba(255,255,255,.10);
   white-space:nowrap;
 }
@@ -111,61 +111,43 @@ header{
   color:#fff;
 }
 
-/* ===========================
-   MAIN (IMPORTANT: plus de margin négatif)
-   =========================== */
+/* ---------- MAIN LAYOUT (1 colonne) ---------- */
 main{
   max-width: var(--wrap);
-  margin: 0 auto 40px;
-  padding: 12px 16px 0;
+  margin: -38px auto 40px;
+  padding: 0 16px;
 }
 
-/* ===========================
-   LAYOUT: 1 COLONNE PARTOUT
-   (donc pareil mobile / pc)
-   =========================== */
 .grid{
   display:flex;
-  flex-direction:column;
-  gap:16px;
-  align-items:stretch;
+  flex-direction:column; /* ✅ toujours 1 colonne */
+  gap: var(--gap);
 }
 
-/* ===========================
-   CARD
-   =========================== */
 .card{
   background:var(--card);
-  border:1px solid var(--line);
+  border:1px solid rgba(219,227,240,.95);
   border-radius:var(--radius);
-  box-shadow:var(--shadow);
+  box-shadow: var(--shadow);
   padding:16px;
 }
 
-/* Titres */
-h2{
-  margin:0 0 10px;
-  font-size:15px;
-}
-h3{
-  margin:14px 0 8px;
-  font-size:13.5px;
-}
+/* titres */
+h2{ margin:0 0 10px; font-size:15.5px; }
+h3{ margin:14px 0 8px; font-size:13.5px; }
 
-/* textes */
 .muted{
   color:var(--muted);
   font-size:13px;
   line-height:1.45;
 }
+
 .tiny{
   font-size:12px;
   color:var(--muted);
 }
 
-/* ===========================
-   CALLOUTS
-   =========================== */
+/* ---------- CALLOUTS ---------- */
 .callout{
   margin-top:12px;
   border-radius:12px;
@@ -179,19 +161,26 @@ h3{
   margin-bottom:4px;
   font-weight:900;
 }
-.callout.blue{ border-left:4px solid var(--brand2); }
-.callout.orange{ border-left:4px solid #f59e0b; background:#fff7ed; }
-.callout.green{ border-left:4px solid #22c55e; background:#f0fdf4; }
+.callout.blue{
+  border-left:4px solid var(--brand2);
+}
+.callout.orange{
+  border-left:4px solid #f59e0b;
+  background:#fff7ed;
+}
+.callout.green{
+  border-left:4px solid #22c55e;
+  background:#f0fdf4;
+}
 
-/* ===========================
-   FORMS / INPUTS
-   =========================== */
+/* ---------- FORMS ---------- */
 .label{
   display:block;
-  font-weight:800;
+  font-weight:900;
   margin:12px 0 6px;
   font-size:13px;
 }
+
 input, select, textarea{
   width:100%;
   border:1px solid var(--line);
@@ -201,18 +190,26 @@ input, select, textarea{
   outline:none;
   background:#fff;
 }
+
 textarea{
   min-height:90px;
   resize:vertical;
 }
+
 input:focus, select:focus, textarea:focus{
   border-color:#9db7d8;
-  box-shadow:0 0 0 3px rgba(27,95,168,.12);
+  box-shadow: 0 0 0 3px rgba(27,95,168,.12);
 }
 
-/* ===========================
-   BUTTONS
-   =========================== */
+/* rows */
+.row{
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+}
+.row > *{ flex:1; min-width: 160px; }
+
+/* ---------- BUTTONS ---------- */
 .btn{
   width:100%;
   padding:11px 12px;
@@ -223,38 +220,34 @@ input:focus, select:focus, textarea:focus{
   cursor:pointer;
   transition: transform .05s ease, box-shadow .15s ease, border-color .15s ease;
 }
+.btn:active{ transform: translateY(1px); }
+.btn:hover{
+  box-shadow: 0 10px 20px rgba(0,0,0,.06);
+  border-color:#9db7d8;
+}
+.btn:disabled{ opacity:.55; cursor:not-allowed; }
+
 .btn.primary{
   background:var(--brand);
   border-color:var(--brand);
   color:#fff;
+  box-shadow: 0 10px 22px rgba(11,58,110,.18);
+}
+.btn.primary:hover{
+  border-color:var(--brand);
 }
 .btn.alt{
   background:#0f3f7a;
-  color:#fff;
   border-color:#0f3f7a;
+  color:#fff;
 }
-.btn:disabled{ opacity:.55; cursor:not-allowed; }
-.btn:active{ transform: translateY(1px); }
-.btn:hover{
-  box-shadow:0 10px 20px rgba(0,0,0,.06);
-  border-color:#9db7d8;
-}
-.btn.primary:hover{ border-color:var(--brand); }
-.btn.alt:hover{ border-color:#0f3f7a; }
-
-.row{
-  display:flex;
-  gap:10px;
-}
-.row > *{ flex:1; }
-
-@media (max-width: 520px){
-  .row{ flex-direction:column; }
+.btn.small{
+  padding:8px 10px;
+  font-weight:800;
+  font-size:12px;
 }
 
-/* ===========================
-   Alerts
-   =========================== */
+/* messages */
 .alert{
   margin-top:12px;
   padding:10px 12px;
@@ -262,7 +255,7 @@ input:focus, select:focus, textarea:focus{
   border:1px solid #f2c2c2;
   background:#fff5f5;
   color:var(--danger);
-  font-weight:700;
+  font-weight:800;
   display:none;
 }
 .warn{
@@ -272,7 +265,7 @@ input:focus, select:focus, textarea:focus{
   border:1px solid #fed7aa;
   background:#fff7ed;
   color:var(--warn);
-  font-weight:800;
+  font-weight:900;
   display:none;
 }
 .ok{
@@ -282,13 +275,11 @@ input:focus, select:focus, textarea:focus{
   border:1px solid #bbf7d0;
   background:#f0fdf4;
   color:#14532d;
-  font-weight:800;
+  font-weight:900;
   display:none;
 }
 
-/* ===========================
-   Step / UI
-   =========================== */
+/* step badge */
 .step{
   display:inline-flex;
   align-items:center;
@@ -299,34 +290,30 @@ input:focus, select:focus, textarea:focus{
   border:1px solid var(--line);
   background:#f8fafc;
   font-weight:900;
-  color:#0f172a;
 }
+
+/* wrappers */
 .stepWrap{
   display:flex;
   justify-content:space-between;
   align-items:center;
   gap:12px;
   margin-bottom:10px;
+  flex-wrap:wrap;
 }
+
 .divider{
   height:1px;
   background:var(--line);
   margin:14px 0;
 }
-.help{
-  font-size:12px;
-  color:var(--muted);
-  margin-top:8px;
-}
 
+/* action box (dans rightPanel) */
 .actionBox{
   display:grid;
-  grid-template-columns:1fr 1fr;
+  grid-template-columns: 1fr;
   gap:10px;
   margin-top:10px;
-}
-@media (max-width: 520px){
-  .actionBox{ grid-template-columns:1fr; }
 }
 
 .panel{
@@ -338,7 +325,11 @@ input:focus, select:focus, textarea:focus{
   display:none;
 }
 
-.linkRow{ display:flex; justify-content:flex-end; margin-top:10px; }
+.linkRow{
+  display:flex;
+  justify-content:flex-end;
+  margin-top:10px;
+}
 .linkBtn{
   border:0;
   background:transparent;
@@ -350,12 +341,26 @@ input:focus, select:focus, textarea:focus{
   font-size:12px;
 }
 
-/* ===========================
-   Appointments list
-   =========================== */
-.apptList{ margin-top:12px; display:flex; flex-direction:column; gap:10px; }
-.apptCard{ border:1px solid var(--line); border-radius:12px; padding:10px 12px; background:#fff; }
-.apptTop{ display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
+/* list appointments */
+.apptList{
+  margin-top:12px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.apptCard{
+  border:1px solid var(--line);
+  border-radius:12px;
+  padding:10px 12px;
+  background:#fff;
+}
+.apptTop{
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  align-items:flex-start;
+  flex-wrap:wrap;
+}
 .badge{
   font-size:12px;
   font-weight:900;
@@ -370,9 +375,7 @@ input:focus, select:focus, textarea:focus{
 .badge.refused{ border-color:#f2c2c2; background:#fff5f5; color:var(--danger); }
 .badge.cancelled{ border-color:#e5e7eb; background:#f9fafb; color:#374151; }
 
-/* ===========================
-   CALENDRIER — Style (inchangé)
-   =========================== */
+/* ---------- CALENDAR (si utilisé dans rightPanel) ---------- */
 :root{
   --cal-bg:#ffffff;
   --cal-head:#f8fafc;
@@ -381,20 +384,36 @@ input:focus, select:focus, textarea:focus{
   --cal-muted:#6b7280;
 
   --cal-free-bg:#ecfdf5;
-  --cal-free-bd:#bbf7d0;
   --cal-block-bg:#f3f4f6;
-  --cal-block-bd:#e5e7eb;
   --cal-sel-bg:#dbeafe;
-  --cal-sel-bd:#93c5fd;
 
   --cal-hover: rgba(27,95,168,.10);
 }
 
-.calHeader{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-top:14px; }
-.calTitle{ font-weight:900; font-size:14px; color:var(--cal-text); }
-#calSub{ margin-top:2px; font-size:12px; color:var(--cal-muted); }
-.calNav{ display:flex; gap:8px; align-items:center; }
-
+.calHeader{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+  margin-top:14px;
+  flex-wrap:wrap;
+}
+.calTitle{
+  font-weight:900;
+  font-size:14px;
+  color:var(--cal-text);
+}
+#calSub{
+  margin-top:2px;
+  font-size:12px;
+  color:var(--cal-muted);
+}
+.calNav{
+  display:flex;
+  gap:8px;
+  align-items:center;
+  flex-wrap:wrap;
+}
 .calBtn{
   padding:8px 10px;
   border-radius:12px;
@@ -403,17 +422,27 @@ input:focus, select:focus, textarea:focus{
   font-weight:900;
   cursor:pointer;
   font-size:12px;
-  transition: transform .05s ease, box-shadow .15s ease, border-color .15s ease;
 }
-.calBtn:hover{ border-color:#9db7d8; box-shadow: 0 8px 18px rgba(0,0,0,.06); }
-.calBtn:active{ transform: translateY(1px); }
-
-.calLegend{ display:flex; gap:12px; flex-wrap:wrap; margin-top:10px; font-size:12px; color:var(--muted); }
+.calBtn:hover{
+  border-color:#9db7d8;
+  box-shadow: 0 8px 18px rgba(0,0,0,.06);
+}
+.calLegend{
+  display:flex;
+  gap:12px;
+  flex-wrap:wrap;
+  margin-top:10px;
+  font-size:12px;
+  color:var(--muted);
+}
 .dotKey{ display:inline-flex; align-items:center; gap:6px; }
-.kdot{ width:10px; height:10px; border-radius:999px; display:inline-block; border:1px solid var(--line); }
-.kfree{ background:var(--cal-free-bg); border-color:var(--cal-free-bd); }
-.kblocked{ background:var(--cal-block-bg); border-color:var(--cal-block-bd); }
-.kselected{ background:var(--cal-sel-bg); border-color:var(--cal-sel-bd); }
+.kdot{
+  width:10px;height:10px;border-radius:999px;
+  display:inline-block;border:1px solid var(--line);
+}
+.kfree{ background:var(--cal-free-bg); }
+.kblocked{ background:var(--cal-block-bg); }
+.kselected{ background:var(--cal-sel-bg); }
 
 .calGrid{
   margin-top:10px;
@@ -421,10 +450,15 @@ input:focus, select:focus, textarea:focus{
   border-radius:16px;
   overflow:hidden;
   background:var(--cal-bg);
-  box-shadow: 0 10px 25px rgba(0,0,0,.06);
+  box-shadow: var(--shadowSoft);
 }
 
-.calRow{ display:grid; grid-template-columns: 92px repeat(5, 1fr); border-top:1px solid var(--cal-grid); min-height:44px; }
+.calRow{
+  display:grid;
+  grid-template-columns: 88px repeat(5, 1fr);
+  border-top:1px solid var(--cal-grid);
+  min-height:44px;
+}
 .calRow:first-child{ border-top:0; }
 
 .calCell{
@@ -464,44 +498,55 @@ input:focus, select:focus, textarea:focus{
 .slot:hover{ box-shadow: inset 0 0 0 2px var(--cal-hover); }
 .slot:active{ transform: scale(.995); }
 
-.slot.blocked, .slot.disabled{
+.slot.blocked,
+.slot.disabled{
   cursor:not-allowed;
   background:var(--cal-block-bg);
   color:#9ca3af;
 }
+
 .slot.selected{
   background:var(--cal-sel-bg);
   box-shadow: inset 0 0 0 2px rgba(27,95,168,.35);
 }
 
-.slot::after{
-  content:"";
-  position:absolute;
-  left:10px; right:10px; bottom:7px;
-  height:3px;
-  border-radius:999px;
-  background: rgba(15,23,42,.06);
-  opacity:0;
-  transition: opacity .15s ease;
-}
-.slot:hover::after{ opacity:.9; }
-.slot.blocked::after, .slot.disabled::after{ opacity:0; }
-.slot.selected::after{ opacity:1; background: rgba(27,95,168,.25); }
+/* ---------- RESPONSIVE ---------- */
 
-@media (max-width: 920px){
-  .calRow{ grid-template-columns: 82px repeat(5, 1fr); }
-  .calCell{ padding:8px 8px; font-size:11px; }
-}
-@media (max-width: 520px){
-  .calRow{ grid-template-columns: 72px repeat(5, 1fr); }
-  .timeCell{ font-size:11px; }
+/* téléphone : header un peu plus haut visuellement */
+@media (max-width: 480px){
+  :root{ --headerH: 175px; }
+  .brand h1{ font-size:17px; }
 }
 
-/* ===========================
-   "Desktop" : on garde 1 colonne,
-   on élargit juste un peu si tu veux.
-   =========================== */
-@media (min-width: 1100px){
-  .topbar{ max-width: var(--wrapWide); }
-  main{ max-width: var(--wrapWide); }
+/* desktop : plus “pro” mais toujours 1 colonne */
+@media (min-width: 900px){
+  :root{
+    --wrap: 860px;
+    --headerH: 150px;
+    --gap: 16px;
+  }
+
+  header{ padding:16px 16px; }
+  main{ margin: -48px auto 48px; }
+  .card{ padding:18px; }
+
+  .brand h1{ font-size:20px; }
+
+  /* rightPanel plus important sans coller au header */
+  #rightPanel.card{
+    border-radius: 18px;
+  }
+
+  /* actions en 2 colonnes uniquement si assez de place, inside panel */
+  .actionBox{
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* très grand écran : limite les lignes trop longues, toujours centré */
+@media (min-width: 1400px){
+  :root{
+    --wrap: 920px;
+    --headerH: 140px;
+  }
 }

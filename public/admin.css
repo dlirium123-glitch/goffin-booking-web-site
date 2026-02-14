@@ -1,37 +1,59 @@
+/* ===========================
+   GOFFIN BOOKING — admin.css
+   Dashboard pro (Option 1)
+   =========================== */
+
+/* ---------- TOKENS ---------- */
 :root{
   --brand:#0b3a6e;
+  --brand2:#1b5fa8;
+
   --bg:#f5f7fb;
   --card:#ffffff;
+  --text:#0f172a;
   --muted:#6b7280;
   --line:#dbe3f0;
+
   --ok:#16a34a;
   --danger:#b91c1c;
   --warn:#f59e0b;
-  --shadow:0 10px 25px rgba(0,0,0,.08);
-  --radius:14px;
+
+  --shadow: 0 14px 34px rgba(0,0,0,.10);
+  --shadowSoft: 0 10px 25px rgba(0,0,0,.08);
+  --radius:16px;
+
+  --wrap: 1240px;
+  --gap: 16px;
+
+  --headerH: 170px; /* hauteur visuelle du header bleu */
 }
 
-*{box-sizing:border-box}
+/* ---------- BASE ---------- */
+*{ box-sizing:border-box; }
+
+html, body{ height:100%; }
 
 body{
   margin:0;
   font-family: Arial, Helvetica, sans-serif;
-  background: linear-gradient(180deg, #0b3a6e 0%, #0b3a6e 180px, var(--bg) 180px);
-  color:#0f172a;
+  color:var(--text);
+  background:
+    linear-gradient(180deg, var(--brand) 0%, var(--brand) var(--headerH), var(--bg) var(--headerH));
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* ================= HEADER ================= */
-
+/* ---------- HEADER ---------- */
 header{
   color:#fff;
-  padding:22px 18px;
+  padding:18px 18px;
 }
 
 .topbar{
-  max-width:1200px;
+  max-width: var(--wrap);
   margin:0 auto;
   display:flex;
-  gap:16px;
+  gap:14px;
   align-items:flex-start;
   justify-content:space-between;
 }
@@ -39,12 +61,19 @@ header{
 .brand h1{
   margin:0;
   font-size:20px;
+  letter-spacing:.2px;
+  line-height:1.2;
 }
 
 .brand p{
   margin:6px 0 0;
-  opacity:.9;
+  opacity:.92;
   font-size:13px;
+}
+
+.tiny{
+  font-size:12px;
+  color:var(--muted);
 }
 
 .status{
@@ -64,55 +93,61 @@ header{
   border-radius:999px;
   font-size:12px;
   background:rgba(255,255,255,.10);
+  white-space:nowrap;
 }
-
 .pill .dot{
-  width:8px;
-  height:8px;
-  border-radius:50%;
+  width:8px;height:8px;border-radius:50%;
   background:#f87171;
 }
+.pill.ok .dot{ background:#34d399; }
 
-.pill.ok .dot{
-  background:#34d399;
-}
-
+/* header buttons */
 .btnTop{
   border:1px solid rgba(255,255,255,.25);
   background:#fff;
   color:var(--brand);
   padding:9px 12px;
-  font-weight:800;
-  border-radius:10px;
+  font-weight:900;
+  border-radius:12px;
   cursor:pointer;
+  transition: transform .05s ease, box-shadow .15s ease;
 }
+.btnTop:hover{ box-shadow: 0 10px 20px rgba(0,0,0,.12); }
+.btnTop:active{ transform: translateY(1px); }
 
 .btnTop.secondary{
   background:transparent;
   color:#fff;
 }
 
-/* ================= LAYOUT ================= */
-
+/* ---------- LAYOUT ---------- */
 main{
-  max-width:1200px;
-  margin:-30px auto 40px;
+  max-width: var(--wrap);
+  margin: -46px auto 46px;
   padding:0 18px;
 }
 
 .grid{
   display:grid;
-  grid-template-columns:1.2fr .8fr;
-  gap:16px;
+  grid-template-columns: 1.25fr 0.85fr; /* RDV à gauche / planning à droite */
+  gap: var(--gap);
   align-items:start;
 }
 
 .card{
   background:var(--card);
-  border:1px solid var(--line);
+  border:1px solid rgba(219,227,240,.95);
   border-radius:var(--radius);
-  box-shadow:var(--shadow);
+  box-shadow: var(--shadow);
   padding:16px;
+}
+
+/* col droite sticky = très “pro” */
+@media (min-width: 980px){
+  .grid > section.card:last-child{
+    position: sticky;
+    top: 16px;
+  }
 }
 
 h2{
@@ -123,69 +158,72 @@ h2{
 .muted{
   color:var(--muted);
   font-size:13px;
+  line-height:1.45;
 }
 
+/* ---------- FORM ROWS ---------- */
 .row{
   display:flex;
   gap:10px;
   flex-wrap:wrap;
 }
+.row > *{ flex:1; min-width: 170px; }
 
-.row > *{
-  flex:1;
-}
-
-input,
-select{
+input, select{
   width:100%;
   border:1px solid var(--line);
-  border-radius:10px;
-  padding:10px;
+  border-radius:12px;
+  padding:10px 11px;
   font-size:14px;
   background:#fff;
+  outline:none;
+}
+input:focus, select:focus{
+  border-color:#9db7d8;
+  box-shadow:0 0 0 3px rgba(27,95,168,.12);
 }
 
-/* ================= BUTTONS ================= */
-
+/* ---------- BUTTONS ---------- */
 .btn{
   padding:10px 12px;
-  border-radius:10px;
+  border-radius:12px;
   border:1px solid var(--line);
   background:#fff;
   font-weight:900;
   cursor:pointer;
+  transition: transform .05s ease, box-shadow .15s ease, border-color .15s ease;
 }
+.btn:hover{
+  border-color:#9db7d8;
+  box-shadow: 0 10px 20px rgba(0,0,0,.06);
+}
+.btn:active{ transform: translateY(1px); }
+.btn:disabled{ opacity:.6; cursor:not-allowed; }
 
 .btn.primary{
   background:var(--brand);
-  color:#fff;
   border-color:var(--brand);
+  color:#fff;
+  box-shadow: 0 10px 22px rgba(11,58,110,.18);
 }
+.btn.primary:hover{ border-color:var(--brand); }
 
 .btn.good{
   background:var(--ok);
-  color:#fff;
   border-color:var(--ok);
+  color:#fff;
 }
-
 .btn.bad{
   background:var(--danger);
-  color:#fff;
   border-color:var(--danger);
+  color:#fff;
 }
-
 .btn.warn{
   background:var(--warn);
   border-color:var(--warn);
 }
 
-.btn:disabled{
-  opacity:.6;
-  cursor:not-allowed;
-}
-
-/* ================= LIST ================= */
-
+/* ---------- LIST / ITEMS ---------- */
 .list{
   display:flex;
   flex-direction:column;
@@ -195,9 +233,10 @@ select{
 
 .item{
   border:1px solid var(--line);
-  border-radius:12px;
+  border-radius:14px;
   padding:10px;
   background:#fff;
+  box-shadow: 0 8px 18px rgba(0,0,0,.04);
 }
 
 .top{
@@ -205,6 +244,7 @@ select{
   justify-content:space-between;
   gap:10px;
   align-items:flex-start;
+  flex-wrap:wrap;
 }
 
 .badge{
@@ -214,46 +254,43 @@ select{
   border-radius:999px;
   border:1px solid var(--line);
   background:#f8fafc;
+  white-space:nowrap;
 }
+.badge.pending{ background:#ffedd5; border-color:#fed7aa; }
+.badge.validated{ background:#dcfce7; border-color:#bbf7d0; }
+.badge.refused{ background:#fee2e2; border-color:#fecaca; }
+.badge.cancelled{ background:#f3f4f6; border-color:#e5e7eb; }
 
-.badge.pending{background:#ffedd5}
-.badge.validated{background:#dcfce7}
-.badge.refused{background:#fee2e2}
-.badge.cancelled{background:#f3f4f6}
-
+/* separators */
 .hr{
   height:1px;
   background:var(--line);
   margin:14px 0;
 }
 
-.tiny{
-  font-size:12px;
-  color:var(--muted);
-}
-
-/* ================= ALERTS ================= */
-
+/* ---------- ALERTS ---------- */
 .alert{
   display:none;
   margin-top:10px;
-  padding:10px;
-  border-radius:10px;
-  background:#fee2e2;
-  font-weight:800;
+  padding:10px 12px;
+  border-radius:12px;
+  border:1px solid #fecaca;
+  background:#fff5f5;
+  font-weight:900;
+  color:#7f1d1d;
 }
-
 .ok{
   display:none;
   margin-top:10px;
-  padding:10px;
-  border-radius:10px;
-  background:#dcfce7;
-  font-weight:800;
+  padding:10px 12px;
+  border-radius:12px;
+  border:1px solid #bbf7d0;
+  background:#f0fdf4;
+  font-weight:900;
+  color:#14532d;
 }
 
-/* ================= MODAL ================= */
-
+/* ---------- MODAL ---------- */
 .overlay{
   position:fixed;
   inset:0;
@@ -266,19 +303,24 @@ select{
 
 .modal{
   background:#fff;
-  border-radius:16px;
+  border-radius:18px;
   padding:16px;
   max-width:420px;
   width:100%;
   border:1px solid var(--line);
-  box-shadow:var(--shadow);
+  box-shadow: var(--shadow);
 }
 
-/* ================= PLANNING PRO ================= */
+/* ---------- PLANNING (Outlook) ---------- */
+/* On met le planning dans un “container” scroll si écran trop petit */
+.planningHeader,
+.planningGrid{
+  width:100%;
+}
 
 .planningHeader{
   display:grid;
-  grid-template-columns:90px repeat(5,1fr);
+  grid-template-columns: 90px repeat(5, minmax(120px, 1fr));
   gap:10px;
   margin-top:10px;
   margin-bottom:10px;
@@ -286,14 +328,13 @@ select{
 
 .dayHead{
   border:1px solid var(--line);
-  border-radius:12px;
+  border-radius:14px;
   background:#f8fafc;
   padding:10px 8px;
   font-weight:900;
   font-size:12px;
   text-align:center;
 }
-
 .dayHead span{
   display:block;
   font-weight:700;
@@ -303,8 +344,20 @@ select{
 
 .planningGrid{
   display:grid;
-  grid-template-columns:90px repeat(5,1fr);
+  grid-template-columns: 90px repeat(5, minmax(120px, 1fr));
   gap:10px;
+}
+
+/* si la colonne droite devient étroite, on autorise un scroll horizontal */
+@media (max-width: 1100px){
+  .planningHeader,
+  .planningGrid{
+    overflow-x:auto;
+    padding-bottom:4px;
+  }
+  /* pour que le scroll marche bien en grid, on force un min-width global */
+  .planningHeader{ min-width: 760px; }
+  .planningGrid{ min-width: 760px; }
 }
 
 .timeCell{
@@ -315,6 +368,9 @@ select{
   font-size:12px;
   color:var(--muted);
   font-weight:900;
+  background:#f8fafc;
+  border:1px solid var(--line);
+  border-radius:14px;
 }
 
 .dayCol{
@@ -325,26 +381,35 @@ select{
 
 .slot{
   height:52px;
-  border-radius:12px;
+  border-radius:14px;
   border:1px solid var(--line);
-  padding:8px;
+  padding:8px 10px;
   display:flex;
   justify-content:space-between;
   align-items:center;
   background:#fff;
   font-size:12px;
   font-weight:900;
+  box-shadow: 0 8px 18px rgba(0,0,0,.04);
 }
 
-.slot.free{background:#eef2ff}
-.slot.blocked{background:#fee2e2}
-.slot.pending{background:#ffedd5}
-.slot.validated{background:#dcfce7}
-.slot.conflict{background:#fde68a}
+/* états slots */
+.slot.free{ background:#eef2ff; border-color:#c7d2fe; }
+.slot.blocked{ background:#fee2e2; border-color:#fecaca; }
+.slot.pending{ background:#ffedd5; border-color:#fed7aa; }
+.slot.validated{ background:#dcfce7; border-color:#bbf7d0; }
+.slot.conflict{ background:#fde68a; border-color:#fcd34d; }
 
-/* ================= RESPONSIVE ================= */
+/* ---------- RESPONSIVE ---------- */
+@media (max-width: 980px){
+  :root{ --headerH: 185px; }
+  .grid{ grid-template-columns: 1fr; }
+  main{ margin-top: -18px; }
+}
 
-@media (max-width: 920px){
-  .grid{grid-template-columns:1fr}
-  main{margin-top:-10px}
+@media (max-width: 520px){
+  header{ padding:16px 14px; }
+  main{ padding:0 14px; }
+  .btnTop{ padding:8px 10px; }
+  .brand h1{ font-size:18px; }
 }
