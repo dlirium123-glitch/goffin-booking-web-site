@@ -10,10 +10,6 @@
   --warn:#b45309;
   --shadow:0 10px 25px rgba(0,0,0,.08);
   --radius:14px;
-
-  /* Desktop tuning */
-  --headerBandMobile:180px;
-  --headerBandDesktop:140px;  /* ↓ moins haut sur PC = look + pro */
 }
 
 *{box-sizing:border-box}
@@ -21,25 +17,15 @@
 body{
   margin:0;
   font-family: Arial, Helvetica, sans-serif;
-  background: linear-gradient(
-    180deg,
-    #0b3a6e 0%,
-    #0b3a6e var(--headerBandMobile),
-    var(--bg) var(--headerBandMobile)
-  );
+  background: linear-gradient(180deg, #0b3a6e 0%, #0b3a6e 180px, var(--bg) 180px);
   color:#0f172a;
 }
 
-/* ============= HEADER ============= */
 header{ color:#fff; padding:22px 18px; }
 
 .topbar{
-  max-width:1100px;
-  margin:0 auto;
-  display:flex;
-  gap:16px;
-  align-items:flex-start;
-  justify-content:space-between;
+  max-width:1100px; margin:0 auto;
+  display:flex; gap:16px; align-items:flex-start; justify-content:space-between;
 }
 
 .brand h1{margin:0;font-size:20px;letter-spacing:.2px}
@@ -66,12 +52,7 @@ header{ color:#fff; padding:22px 18px; }
 }
 .btnTop.secondary{background:transparent;color:#fff}
 
-/* ============= LAYOUT ============= */
-main{
-  max-width:1100px;
-  margin:-30px auto 40px;
-  padding:0 18px;
-}
+main{ max-width:1100px;margin:-30px auto 40px;padding:0 18px; }
 
 .grid{
   display:grid;
@@ -113,6 +94,7 @@ input, select, textarea{
   outline:none;
   background:#fff;
 }
+
 textarea{min-height:90px;resize:vertical}
 
 input:focus, select:focus, textarea:focus{
@@ -211,7 +193,6 @@ input:focus, select:focus, textarea:focus{
 .badge.refused{border-color:#f2c2c2;background:#fff5f5;color:var(--danger)}
 .badge.cancelled{border-color:#e5e7eb;background:#f9fafb;color:#374151}
 
-/* ============= MOBILE ============= */
 @media (max-width: 920px){
   .grid{grid-template-columns:1fr}
   main{margin-top:-10px}
@@ -367,6 +348,7 @@ input:focus, select:focus, textarea:focus{
   box-shadow: inset 0 0 0 2px rgba(27,95,168,.35);
 }
 
+/* petite barre en bas pour look moderne */
 .slot::after{
   content:"";
   position:absolute;
@@ -395,68 +377,133 @@ input:focus, select:focus, textarea:focus{
 }
 
 /* ===========================
-   DESKTOP PRO (mobile-safe)
+   DESKTOP PREMIUM (mobile-safe)
    =========================== */
-/* 👉 Tout ce qui suit ne s’applique qu’à partir de 980px */
-@media (min-width: 980px){
-  /* bande bleue plus courte = moins de vide */
-  body{
-    background: linear-gradient(
-      180deg,
-      #0b3a6e 0%,
-      #0b3a6e var(--headerBandDesktop),
-      var(--bg) var(--headerBandDesktop)
-    );
-  }
 
+/* 1) écrans moyens : on élargit un peu et on densifie */
+@media (min-width: 900px){
   header{
-    padding:18px 18px; /* un peu plus compact */
+    padding:16px 18px; /* moins haut = moins de bande bleue */
   }
 
-  /* même largeur pour header et main (ça fait "produit pro") */
-  .topbar,
   main{
-    max-width: 1180px;
+    max-width: 1180px;     /* plus large sur desktop */
+    margin: -40px auto 44px;
   }
 
-  /* remonte un peu la “carte zone” */
-  main{
-    margin: -42px auto 48px;
-  }
-
-  /* colonne droite stable, alignée et propre */
   .grid{
-    grid-template-columns: 1fr 420px; /* droite fixe = pro */
-    gap: 18px;
+    grid-template-columns: 1.15fr 0.85fr; /* meilleur équilibre */
+    align-items: start;
   }
 
-  /* légère montée de gamme */
   .card{
-    border-radius: 16px;
-    box-shadow: 0 14px 34px rgba(0,0,0,.10);
+    padding:18px;
   }
 
   .brand h1{
     font-size:22px;
   }
+}
 
-  /* Panneau de droite “ancré” (mais PAS en mobile) */
-  #rightPanel.card{
-    position: sticky;
-    top: 16px;
+/* 2) grand desktop : vraie sensation "dashboard" */
+@media (min-width: 1200px){
+  body{
+    /* garde ton style, mais réduit l’impression de vide */
+    background: linear-gradient(
+      180deg,
+      #0b3a6e 0%,
+      #0b3a6e 140px,   /* ↓ avant c’était 180px */
+      var(--bg) 140px
+    );
   }
 
-  /* Meilleure présentation des 2 boutons (connexion/création) */
-  /* (si ton JS met ces boutons dans une .actionBox, ça aide aussi) */
+  main{
+    max-width: 1260px;
+    margin: -55px auto 52px;
+  }
+
+  .grid{
+    grid-template-columns: 1.25fr 0.75fr;
+    gap: 18px;
+  }
+
+  /* cartes plus "premium" */
+  .card{
+    border-radius: 18px;
+    box-shadow: 0 14px 34px rgba(0,0,0,.10);
+    border-color: rgba(219,227,240,.95);
+  }
+
+  /* La carte de droite (connexion) doit paraître plus importante */
+  #rightPanel.card{
+    position: sticky;
+    top: 18px;          /* reste visible */
+  }
+
+  /* densifier la zone actions */
   .actionBox{
+    grid-template-columns: 1fr 1fr;
     gap: 12px;
+  }
+
+  /* boutons un peu plus "app" */
+  .btn{
+    border-radius: 12px;
+  }
+  .btnTop{
+    border-radius: 12px;
   }
 }
 
-/* très grand écran : éviter le “trop large / trop vide” */
-@media (min-width: 1400px){
+/* 3) ultra-large : on évite les lignes trop longues */
+@media (min-width: 1600px){
+  main{
+    max-width: 1320px;
+  }
+}
+
+/* ===========================
+   DESKTOP ALIGN PRO FIX
+   =========================== */
+@media (min-width: 980px){
+
+  /* même largeur exacte header + main */
   .topbar,
   main{
-    max-width: 1240px;
+    max-width: 1200px;
+  }
+
+  /* structure plus stable */
+  .grid{
+    grid-template-columns: 1fr 440px; /* colonne droite fixe */
+    align-items: stretch;             /* ← important */
+  }
+
+  /* force les cartes à démarrer au même niveau */
+  .card{
+    height: 100%;
+  }
+
+  /* carte droite plus compacte et plus premium */
+  #rightPanel.card{
+    align-self: start;
+    padding: 20px;
+    border-radius: 18px;
+    box-shadow: 0 18px 40px rgba(0,0,0,.12);
+  }
+
+  /* espace visuel sous les cartes réduit */
+  main{
+    margin: -48px auto 60px;
+  }
+
+  /* bande bleue encore un peu plus courte */
+  body{
+    background: linear-gradient(
+      180deg,
+      #0b3a6e 0%,
+      #0b3a6e 120px,
+      var(--bg) 120px
+    );
   }
 }
