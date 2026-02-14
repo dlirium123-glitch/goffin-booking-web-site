@@ -5,6 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Assistant de rendez-vous – Goffin</title>
 
+  <!-- Theme color (mobile / onglet) -->
+  <meta name="theme-color" content="#0b3a6e" />
+
+  <!-- Perf: preconnect Firebase/CDN -->
+  <link rel="preconnect" href="https://www.gstatic.com" crossorigin />
+  <link rel="preconnect" href="https://firestore.googleapis.com" crossorigin />
+  <link rel="preconnect" href="https://identitytoolkit.googleapis.com" crossorigin />
+
+  <!-- (Optionnel) favicon si tu ajoutes un fichier /favicon.ico dans /public -->
+  <!-- <link rel="icon" href="/favicon.ico"> -->
+
   <!-- CSS (cache-bust) -->
   <link rel="stylesheet" href="/index.css?v=2026-02-14-1" />
 
@@ -16,60 +27,71 @@
   <!-- Auto-config Firebase Hosting -->
   <script defer src="/__/firebase/init.js"></script>
 
+  <!-- Debug (désactivé par défaut en prod) -->
   <script>
-    console.log("index.html chargé ✅", location.href);
+    // Pour debug ponctuel:
+    // localStorage.setItem("debug", "1");
+    // localStorage.removeItem("debug");
+
+    if (localStorage.getItem("debug") === "1") {
+      console.log("index.html chargé ✅", location.href);
+    }
   </script>
 </head>
 
 <body>
-<header>
-  <div class="topbar">
-    <div class="brand">
-      <h1>Assistant de rendez-vous – Goffin</h1>
-      <p>Réservé aux professionnels • Gaz naturel (GN) uniquement</p>
+  <header>
+    <div class="topbar">
+      <div class="brand">
+        <h1>Assistant de rendez-vous – Goffin</h1>
+        <p>Réservé aux professionnels • Gaz naturel (GN) uniquement</p>
+      </div>
+
+      <div class="status">
+        <span class="pill" id="pillStatus">
+          <span class="dot"></span>
+          <span id="statusText">Non connecté</span>
+        </span>
+
+        <button class="btnTop secondary" id="btnLogout" style="display:none;">Déconnexion</button>
+      </div>
     </div>
-    <div class="status">
-      <span class="pill" id="pillStatus">
-        <span class="dot"></span>
-        <span id="statusText">Non connecté</span>
-      </span>
-      <button class="btnTop secondary" id="btnLogout" style="display:none;">Déconnexion</button>
+  </header>
+
+  <main>
+    <div class="grid">
+      <section class="card">
+        <h2>Informations importantes</h2>
+
+        <p class="muted">
+          Cet outil centralise vos demandes de rendez-vous. Il est réservé aux <b>clients professionnels</b> disposant d’un <b>numéro d’entreprise</b>.
+        </p>
+
+        <div class="callout blue">
+          <strong>Gaz naturel (GN) uniquement.</strong>
+          Les installations propane et butane ne sont pas prises en charge.
+        </div>
+
+        <div class="callout orange">
+          <strong>Politique d’annulation</strong>
+          Tout rendez-vous non annulé <b>au minimum 48 heures</b> à l’avance est considéré comme presté et peut être facturé.
+        </div>
+
+        <div class="callout green">
+          <strong>Confidentialité</strong>
+          Vos données et vos demandes sont visibles uniquement par vous et l’administrateur.
+          Les créneaux occupés apparaissent uniquement comme <b>indisponibles</b>.
+        </div>
+
+        <p class="tiny">Dernière mise à jour : <span>31/01/2026</span></p>
+      </section>
+
+      <!-- Panel dynamique (rempli par index.v3.js) -->
+      <section class="card" id="rightPanel"></section>
     </div>
-  </div>
-</header>
+  </main>
 
-<main>
-  <div class="grid">
-    <section class="card">
-      <h2>Informations importantes</h2>
-      <p class="muted">
-        Cet outil centralise vos demandes de rendez-vous. Il est réservé aux <b>clients professionnels</b> disposant d’un <b>numéro d’entreprise</b>.
-      </p>
-
-      <div class="callout blue">
-        <strong>Gaz naturel (GN) uniquement.</strong>
-        Les installations propane et butane ne sont pas prises en charge.
-      </div>
-
-      <div class="callout orange">
-        <strong>Politique d’annulation</strong>
-        Tout rendez-vous non annulé <b>au minimum 48 heures</b> à l’avance est considéré comme presté et peut être facturé.
-      </div>
-
-      <div class="callout green">
-        <strong>Confidentialité</strong>
-        Vos données et vos demandes sont visibles uniquement par vous et l’administrateur.
-        Les créneaux occupés apparaissent uniquement comme <b>indisponibles</b>.
-      </div>
-
-      <p class="tiny">Dernière mise à jour : <span>31/01/2026</span></p>
-    </section>
-
-    <section class="card" id="rightPanel"></section>
-  </div>
-</main>
-
-<!-- APP CLIENT -->
-<script defer src="/index.v3.js?v=v3-2026-02-07-2"></script>
+  <!-- APP CLIENT -->
+  <script defer src="/index.v3.js?v=v3-2026-02-07-2"></script>
 </body>
 </html>

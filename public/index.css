@@ -1,100 +1,64 @@
 /* =========================================================
-   index.css — Goffin Booking (PRO / adaptatif)
+   Goffin Booking — index.css (PRO / responsive / 1 colonne)
    Objectif:
-   - Mobile-first (ne casse pas téléphone)
-   - Desktop/tablette propres
-   - "Reconnaissance format" via Container Queries (si supportées)
-   - Fallback breakpoints classiques
-   - Z-index + layout sans superpositions
+   - 1 colonne centrée sur PC + mobile (comme sur téléphone)
+   - Lisible, "outil pro", pas d'effet vide énorme
+   - Sans casser le rendu mobile existant
    ========================================================= */
 
-/* -----------------------------
-   1) TOKENS (Design system)
------------------------------- */
+/* -------------------------
+   1) Variables / Reset
+   ------------------------- */
 :root{
   --brand:#0b3a6e;
   --brand2:#1b5fa8;
-
   --bg:#f5f7fb;
   --card:#ffffff;
-  --text:#0f172a;
   --muted:#6b7280;
   --line:#dbe3f0;
-
   --ok:#16a34a;
   --danger:#8a1f1f;
   --warn:#b45309;
-
-  --radius:14px;
-  --radius-lg:18px;
-
   --shadow:0 10px 25px rgba(0,0,0,.08);
-  --shadow-lg:0 18px 44px rgba(0,0,0,.12);
+  --radius:14px;
 
-  /* Layout */
-  --pad:18px;
-  --gap:16px;
-
-  --wrap:1100px;
-  --wrap-lg:1220px;
-  --wrap-xl:1320px;
-
-  /* Header band */
-  --hero-h:180px;     /* mobile */
-  --hero-h-lg:150px;  /* desktop */
-
-  /* Calendar palette */
-  --cal-bg:#ffffff;
-  --cal-head:#f8fafc;
-  --cal-grid:#e5e7eb;
-  --cal-text:#0f172a;
-  --cal-muted:#6b7280;
-
-  --cal-free-bg:#ecfdf5;
-  --cal-free-bd:#bbf7d0;
-  --cal-block-bg:#f3f4f6;
-  --cal-block-bd:#e5e7eb;
-  --cal-sel-bg:#dbeafe;
-  --cal-sel-bd:#93c5fd;
-
-  --cal-hover: rgba(27,95,168,.10);
+  /* layout */
+  --wrap: 980px;         /* largeur max "pro" */
+  --pad: 18px;
+  --heroH: 150px;        /* hauteur de la zone bleue */
 }
 
-/* --------------------------------
-   2) RESET + GLOBAL
---------------------------------- */
 *{ box-sizing:border-box; }
-html{ -webkit-text-size-adjust:100%; }
+
+html, body{
+  height:100%;
+}
+
 body{
   margin:0;
   font-family: Arial, Helvetica, sans-serif;
-  color:var(--text);
+  color:#0f172a;
+
+  /* Bande bleue + fond clair (moins agressif que 180px) */
   background: linear-gradient(
     180deg,
     var(--brand) 0%,
-    var(--brand) var(--hero-h),
-    var(--bg) var(--hero-h)
+    var(--brand) var(--heroH),
+    var(--bg) var(--heroH)
   );
 }
 
-/* Accessibilité */
-@media (prefers-reduced-motion: reduce){
-  *{ scroll-behavior:auto !important; transition:none !important; animation:none !important; }
-}
-
-/* --------------------------------
-   3) HEADER / TOPBAR
---------------------------------- */
+/* -------------------------
+   2) Header
+   ------------------------- */
 header{
   color:#fff;
-  padding:22px var(--pad);
-  position:relative;
-  z-index:10; /* ✅ au-dessus des cartes */
+  padding: 18px var(--pad);
 }
 
 .topbar{
   max-width: var(--wrap);
-  margin:0 auto;
+  margin: 0 auto;
   display:flex;
   gap:16px;
   align-items:flex-start;
@@ -105,8 +69,8 @@ header{
   margin:0;
   font-size:20px;
   letter-spacing:.2px;
-  line-height:1.15;
 }
+
 .brand p{
   margin:6px 0 0;
   opacity:.9;
@@ -130,9 +94,14 @@ header{
   border-radius:999px;
   font-size:12px;
   background:rgba(255,255,255,.10);
-  white-space:nowrap;
 }
-.pill .dot{ width:8px;height:8px;border-radius:50%; background:#f87171; }
+
+.pill .dot{
+  width:8px;
+  height:8px;
+  border-radius:50%;
+  background:#f87171;
+}
 .pill.ok .dot{ background:#34d399; }
 
 .btnTop{
@@ -144,49 +113,66 @@ header{
   border-radius:10px;
   cursor:pointer;
 }
-.btnTop.secondary{ background:transparent; color:#fff; }
+.btnTop.secondary{
+  background:transparent;
+  color:#fff;
+}
 
-/* --------------------------------
-   4) MAIN / GRID / CARDS
-   ✅ Pas de gros margin négatif (évite superpositions)
---------------------------------- */
+/* -------------------------
+   3) Layout principal
+   - 1 colonne partout
+   ------------------------- */
 main{
   max-width: var(--wrap);
-  margin:0 auto;
-  padding:0 var(--pad);
-  transform: translateY(-22px);  /* effet “cartes qui montent” sans casser le flow */
-  position:relative;
-  z-index:1;
+  margin: -22px auto 40px; /* “cartes qui montent” léger */
+  padding: 0 var(--pad);
 }
 
+/* ✅ 1 colonne centrée partout */
 .grid{
   display:grid;
-  grid-template-columns: 1fr;   /* mobile-first */
-  gap: var(--gap);
+  grid-template-columns: 1fr;
+  gap: 16px;
   align-items:start;
-
-  /* "reconnaissance format" = container queries */
-  container-type: inline-size;
-  container-name: layout;
+  justify-items:center;
 }
 
+/* -------------------------
+   4) Cards
+   ------------------------- */
 .card{
+  width:100%;
   background:var(--card);
   border:1px solid var(--line);
   border-radius:var(--radius);
   box-shadow:var(--shadow);
   padding:16px;
-  overflow:hidden;
 }
 
-h2{ margin:0 0 10px; font-size:16px; }
-h3{ margin:14px 0 8px; font-size:14px; }
-.muted{ color:var(--muted); font-size:13px; line-height:1.45; }
-.tiny{ font-size:12px; color:var(--muted); }
+h2{
+  margin:0 0 10px;
+  font-size:16px;
+}
 
-/* --------------------------------
-   5) CALLOUTS
---------------------------------- */
+h3{
+  margin:14px 0 8px;
+  font-size:14px;
+}
+
+.muted{
+  color:var(--muted);
+  font-size:13px;
+  line-height:1.4;
+}
+
+.tiny{
+  font-size:12px;
+  color:var(--muted);
+}
+
+/* -------------------------
+   5) Callouts
+   ------------------------- */
 .callout{
   margin-top:12px;
   border-radius:12px;
@@ -195,14 +181,19 @@ h3{ margin:14px 0 8px; font-size:14px; }
   background:#f8fafc;
   font-size:13px;
 }
+
 .callout.blue{ border-left:4px solid var(--brand2); }
 .callout.orange{ border-left:4px solid #f59e0b; background:#fff7ed; }
 .callout.green{ border-left:4px solid #22c55e; background:#f0fdf4; }
-.callout strong{ display:block; margin-bottom:4px; }
 
-/* --------------------------------
-   6) FORMS / BUTTONS
---------------------------------- */
+.callout strong{
+  display:block;
+  margin-bottom:4px;
+}
+
+/* -------------------------
+   6) Form / Inputs
+   ------------------------- */
 .label{
   display:block;
   font-weight:800;
@@ -219,16 +210,26 @@ input, select, textarea{
   outline:none;
   background:#fff;
 }
-textarea{ min-height:90px; resize:vertical; }
+
+textarea{
+  min-height:90px;
+  resize:vertical;
+}
 
 input:focus, select:focus, textarea:focus{
   border-color:#9db7d8;
   box-shadow:0 0 0 3px rgba(27,95,168,.12);
 }
 
-.row{ display:flex; gap:10px; flex-wrap:wrap; }
-.row > *{ flex:1; min-width:160px; }
+.row{
+  display:flex;
+  gap:10px;
+}
+.row > *{ flex:1; }
 
+/* -------------------------
+   7) Buttons / Helpers
+   ------------------------- */
 .btn{
   width:100%;
   padding:11px 12px;
@@ -239,13 +240,45 @@ input:focus, select:focus, textarea:focus{
   cursor:pointer;
   transition: transform .05s ease, box-shadow .15s ease, border-color .15s ease;
 }
-.btn.primary{ background:var(--brand); border-color:var(--brand); color:#fff; }
-.btn.alt{ background:#0f3f7a; border-color:#0f3f7a; color:#fff; }
-.btn:disabled{ opacity:.55; cursor:not-allowed; }
-.btn:active{ transform: translateY(1px); }
-.btn:hover{ box-shadow:0 10px 20px rgba(0,0,0,.06); border-color:#9db7d8; }
-.btn.small{ padding:8px 10px; font-weight:800; font-size:12px; }
 
+.btn.primary{
+  background:var(--brand);
+  border-color:var(--brand);
+  color:#fff;
+}
+
+.btn.alt{
+  background:#0f3f7a;
+  color:#fff;
+  border-color:#0f3f7a;
+}
+
+.btn.small{
+  padding:8px 10px;
+  font-weight:800;
+  font-size:12px;
+}
+
+.btn:disabled{
+  opacity:.55;
+  cursor:not-allowed;
+}
+
+.btn:active{ transform: translateY(1px); }
+.btn:hover{
+  box-shadow:0 10px 20px rgba(0,0,0,.06);
+  border-color:#9db7d8;
+}
+.btn.primary:hover{ border-color:var(--brand); }
+.btn.alt:hover{ border-color:#0f3f7a; }
+
+.help{
+  font-size:12px;
+  color:var(--muted);
+  margin-top:8px;
+}
+
+/* Messages */
 .alert{
   margin-top:12px;
   padding:10px 12px;
@@ -256,6 +289,7 @@ input:focus, select:focus, textarea:focus{
   font-weight:700;
   display:none;
 }
+
 .warn{
   margin-top:12px;
   padding:10px 12px;
@@ -266,6 +300,7 @@ input:focus, select:focus, textarea:focus{
   font-weight:800;
   display:none;
 }
+
 .ok{
   margin-top:12px;
   padding:10px 12px;
@@ -277,13 +312,85 @@ input:focus, select:focus, textarea:focus{
   display:none;
 }
 
-/* --------------------------------
-   7) CARTES RDV (si affichées)
---------------------------------- */
-.apptList{ margin-top:12px; display:flex; flex-direction:column; gap:10px; }
-.apptCard{ border:1px solid var(--line); border-radius:12px; padding:10px 12px; background:#fff; }
-.apptTop{ display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
+/* Etape / Header bloc */
+.step{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  font-size:12px;
+  padding:7px 10px;
+  border-radius:999px;
+  border:1px solid var(--line);
+  background:#f8fafc;
+  font-weight:900;
+  color:#0f172a;
+}
 
+.stepWrap{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:12px;
+  margin-bottom:10px;
+}
+
+.divider{
+  height:1px;
+  background:var(--line);
+  margin:14px 0;
+}
+
+.actionBox{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:10px;
+  margin-top:10px;
+}
+
+.panel{
+  margin-top:12px;
+  border:1px solid var(--line);
+  background:#f8fafc;
+  border-radius:12px;
+  padding:12px;
+  display:none;
+}
+
+.linkRow{
+  display:flex;
+  justify-content:flex-end;
+  margin-top:10px;
+}
+.linkBtn{
+  border:0;
+  background:transparent;
+  color:var(--brand2);
+  font-weight:900;
+  cursor:pointer;
+  padding:0;
+  text-decoration:underline;
+  font-size:12px;
+}
+
+/* Liste RDV */
+.apptList{
+  margin-top:12px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.apptCard{
+  border:1px solid var(--line);
+  border-radius:12px;
+  padding:10px 12px;
+  background:#fff;
+}
+.apptTop{
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  align-items:flex-start;
+}
 .badge{
   font-size:12px;
   font-weight:900;
@@ -298,9 +405,27 @@ input:focus, select:focus, textarea:focus{
 .badge.refused{ border-color:#f2c2c2; background:#fff5f5; color:var(--danger); }
 .badge.cancelled{ border-color:#e5e7eb; background:#f9fafb; color:#374151; }
 
-/* --------------------------------
-   8) CALENDRIER (si utilisé)
---------------------------------- */
+/* -------------------------
+   8) Calendrier (si utilisé)
+   (inchangé, mais compatible 1 colonne)
+   ------------------------- */
+:root{
+  --cal-bg:#ffffff;
+  --cal-head:#f8fafc;
+  --cal-grid:#e5e7eb;
+  --cal-text:#0f172a;
+  --cal-muted:#6b7280;
+
+  --cal-free-bg:#ecfdf5;
+  --cal-free-bd:#bbf7d0;
+  --cal-block-bg:#f3f4f6;
+  --cal-block-bd:#e5e7eb;
+  --cal-sel-bg:#dbeafe;
+  --cal-sel-bd:#93c5fd;
+
+  --cal-hover: rgba(27,95,168,.10);
+}
+
 .calHeader{
   display:flex;
   align-items:flex-start;
@@ -308,9 +433,24 @@ input:focus, select:focus, textarea:focus{
   gap:12px;
   margin-top:14px;
 }
-.calTitle{ font-weight:900; font-size:14px; color:var(--cal-text); }
-#calSub{ margin-top:2px; font-size:12px; color:var(--cal-muted); }
-.calNav{ display:flex; gap:8px; align-items:center; }
+
+.calTitle{
+  font-weight:900;
+  font-size:14px;
+  color:var(--cal-text);
+}
+
+#calSub{
+  margin-top:2px;
+  font-size:12px;
+  color:var(--cal-muted);
+}
+
+.calNav{
+  display:flex;
+  gap:8px;
+  align-items:center;
+}
 
 .calBtn{
   padding:8px 10px;
@@ -322,8 +462,34 @@ input:focus, select:focus, textarea:focus{
   font-size:12px;
   transition: transform .05s ease, box-shadow .15s ease, border-color .15s ease;
 }
-.calBtn:hover{ border-color:#9db7d8; box-shadow:0 8px 18px rgba(0,0,0,.06); }
+.calBtn:hover{
+  border-color:#9db7d8;
+  box-shadow: 0 8px 18px rgba(0,0,0,.06);
+}
 .calBtn:active{ transform: translateY(1px); }
+
+.calLegend{
+  display:flex;
+  gap:12px;
+  flex-wrap:wrap;
+  margin-top:10px;
+  font-size:12px;
+  color:var(--muted);
+}
+
+.dotKey{
+  display:inline-flex;
+  align-items:center;
+  gap:6px
+}
+
+.kdot{
+  width:10px;height:10px;border-radius:999px;
+  display:inline-block;border:1px solid var(--line)
+}
+.kfree{ background:var(--cal-free-bg); border-color:var(--cal-free-bd); }
+.kblocked{ background:var(--cal-block-bg); border-color:var(--cal-block-bd); }
+.kselected{ background:var(--cal-sel-bg); border-color:var(--cal-sel-bd); }
 
 .calGrid{
   margin-top:10px;
@@ -331,8 +497,9 @@ input:focus, select:focus, textarea:focus{
   border-radius:16px;
   overflow:hidden;
   background:var(--cal-bg);
-  box-shadow:0 10px 25px rgba(0,0,0,.06);
+  box-shadow: 0 10px 25px rgba(0,0,0,.06);
 }
+
 .calRow{
   display:grid;
   grid-template-columns: 92px repeat(5, 1fr);
@@ -356,130 +523,80 @@ input:focus, select:focus, textarea:focus{
 .timeCell{
   justify-content:flex-start;
   font-weight:900;
+  color:var(--cal-text);
   background:var(--cal-head);
   letter-spacing:.2px;
+}
+
+.dayHead{
+  font-weight:900;
+  background:var(--cal-head);
+  position:sticky;
+  top:0;
+  z-index:2;
 }
 
 .slot{
   cursor:pointer;
   background:var(--cal-free-bg);
   position:relative;
-  transition: transform .05s ease, box-shadow .15s ease;
+  transition: transform .05s ease, box-shadow .15s ease, background .15s ease;
 }
 .slot:hover{ box-shadow: inset 0 0 0 2px var(--cal-hover); }
 .slot:active{ transform: scale(.995); }
 
-.slot.blocked, .slot.disabled{
+.slot.blocked,
+.slot.disabled{
   cursor:not-allowed;
   background:var(--cal-block-bg);
   color:#9ca3af;
 }
+
 .slot.selected{
   background:var(--cal-sel-bg);
   box-shadow: inset 0 0 0 2px rgba(27,95,168,.35);
 }
 
+.slot::after{
+  content:"";
+  position:absolute;
+  left:10px; right:10px; bottom:7px;
+  height:3px;
+  border-radius:999px;
+  background: rgba(15,23,42,.06);
+  opacity:0;
+  transition: opacity .15s ease;
+}
+.slot:hover::after{ opacity:.9; }
+.slot.blocked::after,
+.slot.disabled::after{ opacity:0; }
+.slot.selected::after{
+  opacity:1;
+  background: rgba(27,95,168,.25);
+}
+
+/* -------------------------
+   9) Responsive
+   ------------------------- */
+
+/* Mobile: on garde ton look */
 @media (max-width: 920px){
-  .calRow{ grid-template-columns: 82px repeat(5, 1fr); }
-  .calCell{ padding:8px 8px; font-size:11px; }
+  main{ margin-top:-10px; }
+  .actionBox{ grid-template-columns:1fr; }
 }
+
+/* Petit mobile */
 @media (max-width: 520px){
-  .calRow{ grid-template-columns: 72px repeat(5, 1fr); }
-  .timeCell{ font-size:11px; }
+  header{ padding: 16px 14px; }
+  main{ padding: 0 14px; }
+  .topbar{ gap:12px; }
+  .brand h1{ font-size:18px; }
 }
 
-/* =========================================================
-   9) "RECONNAISSANCE FORMAT" (Container Queries)
-   -> S’adapte à la largeur réelle de .grid (split/DevTools)
-   ========================================================= */
-@supports (container-type: inline-size){
-
-  /* Quand la zone est ≥ 900px : on passe en 2 colonnes */
-  @container layout (min-width: 900px){
-    .grid{
-      grid-template-columns: 1.35fr 0.65fr;
-      gap:18px;
-      align-items:start;
-    }
-
-    /* Le panneau droit devient "carte de login" stable */
-    #rightPanel.card{
-      position: sticky;
-      top: 18px;
-      align-self: start;
-    }
-  }
-
-  /* Quand la zone est ≥ 1150px : on “pro” encore plus */
-  @container layout (min-width: 1150px){
-    main{ max-width: var(--wrap-lg); }
-    .card{
-      border-radius: var(--radius-lg);
-      box-shadow: var(--shadow-lg);
-      padding:18px;
-    }
-  }
-
-  /* Très large */
-  @container layout (min-width: 1300px){
-    main{ max-width: var(--wrap-xl); }
-  }
-}
-
-/* =========================================================
-   10) FALLBACK BREAKPOINTS (si pas container queries)
-   ========================================================= */
-@supports not (container-type: inline-size){
-
-  @media (min-width: 1024px){
-    body{
-      background: linear-gradient(
-        180deg,
-        var(--brand) 0%,
-        var(--brand) var(--hero-h-lg),
-        var(--bg) var(--hero-h-lg)
-      );
-    }
-    header{ padding:18px var(--pad); }
-    main{
-      max-width: var(--wrap-lg);
-      transform: translateY(-18px);
-    }
-    .grid{
-      grid-template-columns: 1.35fr 0.65fr;
-      gap:18px;
-    }
-    #rightPanel.card{
-      position: sticky;
-      top: 18px;
-      align-self: start;
-    }
-    .card{
-      border-radius: var(--radius-lg);
-      box-shadow: var(--shadow-lg);
-      padding:18px;
-    }
-  }
-
-  @media (min-width: 1280px){
-    main{ max-width: var(--wrap-xl); }
-  }
-
-  @media (min-width: 1600px){
-    main{ max-width: 1320px; }
-    .topbar{ max-width: 1320px; }
-  }
-}
-
-/* =========================================================
-   11) MICRO-AJUSTEMENTS “PRO” POUR DESKTOP
-   (ne s’applique jamais sur mobile)
-   ========================================================= */
+/* Desktop: juste un peu plus "premium" sans changer le flow 1 colonne */
 @media (min-width: 1024px){
   .brand h1{ font-size:22px; }
+  .card{ padding:18px; }
   .btnTop{ border-radius:12px; }
   .btn{ border-radius:12px; }
-
-  /* ✅ évite les “cadres collés au header” */
-  main{ padding-top: 6px; }
 }
