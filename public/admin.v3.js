@@ -3,7 +3,7 @@
    Version: 2026-02-10
    =============================== */
 /* eslint-disable no-console */
-const ADMIN_VERSION = "admin-2026-02-10-2";
+const ADMIN_VERSION = "admin-2026-02-15-1";
 console.log("admin.v3.js chargé ✅", ADMIN_VERSION);
 
 document.addEventListener("DOMContentLoaded", async () => {
