@@ -1,10 +1,10 @@
 // =======================================================
 // Goffin Booking — index.v3.js
-// Option A + BONUS (source unique freeSlots)
-// - pas de busySlots
-// - badge "Outlook" sur blockedReason=outlook
+// Étape 1 (A1): Profil société obligatoire + gating
+// Source unique planning: freeSlots
+// ✅ Compatible avec tes Firestore rules (freeSlots client update: status + updatedAt seulement)
 // =======================================================
-const INDEX_VERSION = "v3-2026-02-11-A-bonus";
+const INDEX_VERSION = "v3-2026-02-15-A1-profile";
 console.log("index.v3.js chargé ✅", INDEX_VERSION);
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -326,52 +326,60 @@ document.addEventListener("DOMContentLoaded", async () => {
     return true;
   }
 
-  // ---------- UI: Profile ----------
+  // ---------- UI: Profile (A1) ----------
   function renderProfileForm(userEmail) {
     right.innerHTML = `
       <div class="stepWrap">
-        <span class="step">Étape 2/3 — Profil client</span>
+        <span class="step">Étape 2/3 — Profil société</span>
         <span class="muted" style="font-size:12px">${escapeHtml(userEmail || "")}</span>
       </div>
 
-      <p class="muted">Complétez vos informations société (1 minute).</p>
+      <div class="callout blue">
+        <strong>Obligatoire (une seule fois)</strong>
+        <div class="muted">Ces informations seront utilisées pour vos demandes de rendez-vous.</div>
+      </div>
 
-      <label class="label">Société</label>
-      <input id="p_company" placeholder="Nom de la société"/>
+      <label class="label">Nom de la société</label>
+      <input id="p_companyName" placeholder="Ex: Goffin SRL"/>
 
       <div class="row">
         <div>
           <label class="label">N° d’entreprise (BCE)</label>
-          <input id="p_vat" placeholder="ex: BE0123456789"/>
+          <input id="p_enterpriseNumber" placeholder="Ex: BE0123456789"/>
         </div>
         <div>
           <label class="label">Téléphone</label>
-          <input id="p_phone" placeholder="ex: +32 ..."/>
+          <input id="p_phone" placeholder="Ex: +32 4 123 45 67"/>
         </div>
       </div>
 
-      <label class="label">Adresse du siège social (obligatoire)</label>
-      <textarea id="p_hq" placeholder="Rue, n°, code postal, ville"></textarea>
+      <label class="label">Adresse du siège social</label>
+      <textarea id="p_seatAddress" placeholder="Rue, n°, code postal, ville"></textarea>
 
-      <label class="label">Adresse du chantier / site (si différente)</label>
-      <textarea id="p_site" placeholder="Rue, n°, code postal, ville"></textarea>
-
-      <button id="btnSaveProfile" class="btn primary" style="margin-top:12px" type="button">Enregistrer mon profil</button>
+      <button id="btnSaveProfile" class="btn primary" style="margin-top:12px" type="button">Enregistrer</button>
 
       <div id="uiBanner" class="alert" style="display:none"></div>
     `;
   }
 
-  function validateProfile(data) {
+  function normalizeEnterpriseNumber(s) {
+    return String(s || "")
+      .trim()
+      .toUpperCase()
+      .replace(/\s+/g, "")
+      .replace(/^BE0?/, "BE"); // simple normalisation
+  }
+
+  function validateProfileA1(data) {
     const errors = [];
-    if (!data.company || data.company.length < 2) errors.push("Veuillez indiquer la société.");
-    if (!data.vat || data.vat.length < 6) errors.push("Veuillez indiquer le numéro BCE (ex: BE...).");
+    if (!data.companyName || data.companyName.length < 2) errors.push("Veuillez indiquer le nom de la société.");
+    if (!data.enterpriseNumber || data.enterpriseNumber.length < 6) errors.push("Veuillez indiquer le n° d’entreprise (ex: BE...).");
     if (!data.phone || data.phone.length < 6) errors.push("Veuillez indiquer un numéro de téléphone.");
-    if (!data.hqAddress || data.hqAddress.length < 8) errors.push("Veuillez indiquer l’adresse du siège social.");
+    if (!data.seatAddress || data.seatAddress.length < 8) errors.push("Veuillez indiquer l’adresse du siège social.");
     return errors;
   }
 
-  // ---------- UI: Calendar / Booking ----------
+  // ---------- UI: Calendar / Booking (shell inchangé) ----------
   function renderBookingShell(userEmail) {
     right.innerHTML = `
       <div class="stepWrap">
@@ -533,7 +541,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     }).join("");
   }
 
-  async function bookSlot(db, user, selected, note) {
+  // ⚠️ IMPORTANT: respect rules freeSlots (client update only: status, updatedAt)
+  async function bookSlot(db, user, selected, note, clientProfile) {
     const apptRef = db.collection("appointments").doc();
     const lockRef = db.collection("slots").doc();
     const freeRef = db.collection("freeSlots").doc(selected.freeSlotDocId);
@@ -550,20 +559,28 @@ document.addEventListener("DOMContentLoaded", async () => {
         throw new Error("Ce créneau n’est plus disponible.");
       }
 
+      // ✅ client autorisé: status + updatedAt uniquement
       tx.update(freeRef, {
         status: "blocked",
-        blockedReason: "booking",
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
 
+      // snapshot profil société dans l'appointment (pro)
       tx.set(apptRef, {
         uid: user.uid,
         email: (user.email || "").toLowerCase(),
+
+        companyName: clientProfile.companyName,
+        enterpriseNumber: clientProfile.enterpriseNumber,
+        phone: clientProfile.phone,
+        seatAddress: clientProfile.seatAddress,
+
         start: startTs,
         end: endTs,
         status: "pending",
         note: note || "",
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
 
       tx.set(lockRef, {
@@ -609,8 +626,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   let selectedSlot = null; // { key, startDate, endDate, freeSlotDocId }
   let lastFreeSlotsMap = new Map();
 
+  // Cache profil client (une fois chargé)
+  let cachedClientProfile = null;
+
   function makeOutlookLabel() {
-    // BONUS: petit label (sans CSS ça s'affiche quand même)
     return `<span class="miniTag outlook">Outlook</span>`;
   }
 
@@ -653,7 +672,6 @@ document.addEventListener("DOMContentLoaded", async () => {
         let label = "";
 
         if (!freeDoc) {
-          // slot non généré par l'admin (ou fenêtre hors génération)
           status = "blocked";
           disabled = true;
           title = "Non généré";
@@ -671,7 +689,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
             if (br === "outlook") {
               title = "Indisponible (Outlook)";
-              label = makeOutlookLabel(); // BONUS
+              label = makeOutlookLabel();
             } else if (br === "validated") {
               title = "Indisponible (déjà validé)";
             } else if (br === "booking") {
@@ -695,7 +713,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         // sélection
         if (selectedSlot && selectedSlot.key === key) {
-          // si le slot devient indispo entre temps => on annule
           if (!freeDoc || String(freeDoc.status || "").toLowerCase() !== "free" || start < min48) {
             selectedSlot = null;
           } else {
@@ -719,7 +736,6 @@ document.addEventListener("DOMContentLoaded", async () => {
         const key = cell.getAttribute("data-slotkey");
         if (!key) return;
 
-        // toggle off
         if (selectedSlot && selectedSlot.key === key) {
           selectedSlot = null;
           const b = document.getElementById("btnBook");
@@ -737,7 +753,6 @@ document.addEventListener("DOMContentLoaded", async () => {
         const mm = parseInt(hm.slice(2, 4), 10);
         const start = new Date(yy, (mo - 1), dd, hh, mm, 0, 0);
 
-        // règle <48h
         const min48now = new Date(Date.now() + 48 * 60 * 60 * 1000);
         if (start < min48now) {
           showBanner("warn", "Ce créneau est à moins de 48h : réservation impossible.");
@@ -791,14 +806,23 @@ document.addEventListener("DOMContentLoaded", async () => {
     document.getElementById("btnBook")?.addEventListener("click", async () => {
       hideBanner();
       const btnBook = document.getElementById("btnBook");
+
       if (!selectedSlot) {
         showBanner("alert", "Veuillez sélectionner un créneau.");
         return;
       }
+
+      if (!cachedClientProfile) {
+        showBanner("alert", "Profil société manquant. Recharge la page ou complète ton profil.");
+        return;
+      }
+
       try {
         if (btnBook) btnBook.disabled = true;
         const note = (document.getElementById("apptNote")?.value || "").trim();
-        await bookSlot(db, user, selectedSlot, note);
+
+        await bookSlot(db, user, selectedSlot, note, cachedClientProfile);
+
         showBanner("ok", "Demande envoyée ✅ (en attente de validation)");
         selectedSlot = null;
         if (btnBook) btnBook.disabled = true;
@@ -820,6 +844,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const didRedirect = await redirectIfAdmin(db, user);
     if (didRedirect) return;
 
+    // Lire profil client
     let snap;
     try {
       snap = await db.collection("clients").doc(user.uid).get();
@@ -835,6 +860,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       return;
     }
 
+    // Profil absent => forcer A1
     if (!snap.exists) {
       renderProfileForm(user.email || "");
       setStatus(true);
@@ -844,17 +870,15 @@ document.addEventListener("DOMContentLoaded", async () => {
         hideBanner();
 
         const data = {
+          companyName: (document.getElementById("p_companyName")?.value || "").trim(),
+          enterpriseNumber: normalizeEnterpriseNumber(document.getElementById("p_enterpriseNumber")?.value || ""),
           email: (user.email || "").toLowerCase(),
-          company: (document.getElementById("p_company")?.value || "").trim(),
-          vat: (document.getElementById("p_vat")?.value || "").trim(),
           phone: (document.getElementById("p_phone")?.value || "").trim(),
-          hqAddress: (document.getElementById("p_hq")?.value || "").trim(),
-          siteAddress: (document.getElementById("p_site")?.value || "").trim(),
-          status: "ok",
+          seatAddress: (document.getElementById("p_seatAddress")?.value || "").trim(),
           updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
         };
 
-        const errs = validateProfile(data);
+        const errs = validateProfileA1(data);
         if (errs.length) {
           showBanner("alert", errs[0]);
           return;
@@ -862,10 +886,21 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         try {
           btn.disabled = true;
+
           await db.collection("clients").doc(user.uid).set(
-            { ...data, createdAt: firebase.firestore.FieldValue.serverTimestamp() },
+            {
+              ...data,
+              createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+            },
             { merge: true }
           );
+
+          cachedClientProfile = {
+            companyName: data.companyName,
+            enterpriseNumber: data.enterpriseNumber,
+            phone: data.phone,
+            seatAddress: data.seatAddress,
+          };
 
           renderBookingShell(user.email || "");
           selectedSlot = null;
@@ -875,6 +910,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           await bindCalendarNav(user);
           await bindBookButton(user);
           await refreshCalendarAndAppointments(user);
+
         } catch (e) {
           console.error(e);
           if (!isProbablyAdblockNetworkError(e)) {
@@ -889,6 +925,15 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       return;
     }
+
+    // Profil existant => cache + accès booking
+    const d = snap.data() || {};
+    cachedClientProfile = {
+      companyName: String(d.companyName || ""),
+      enterpriseNumber: String(d.enterpriseNumber || ""),
+      phone: String(d.phone || ""),
+      seatAddress: String(d.seatAddress || ""),
+    };
 
     renderBookingShell(user.email || "");
     selectedSlot = null;
@@ -907,6 +952,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (!user) {
       __adminChecked = false;
       __isAdminCached = false;
+      cachedClientProfile = null;
 
       renderAuth();
       wireAuthHandlers(auth);
