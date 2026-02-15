@@ -1,83 +1,79 @@
-/* =========================================
+/* =======================================================
    Goffin Booking — index.css (PRO)
-   Layout: 1 colonne (mobile + desktop)
-   Objectif: clean, centré, zéro superposition
-   ========================================= */
+   - 1 colonne partout (PC + mobile)
+   - plus de chevauchement header/main
+   - calendrier responsive + scroll si besoin
+   Version: 2026-02-15-2
+   ======================================================= */
 
 :root{
   --brand:#0b3a6e;
-  --brand2:#1b5fa8;
-
+  --brand2:#123e77;
   --bg:#f5f7fb;
   --card:#ffffff;
-  --text:#0f172a;
   --muted:#6b7280;
-
+  --text:#0f172a;
   --line:#dbe3f0;
-  --shadow:0 14px 34px rgba(0,0,0,.10);
+
+  --ok-bg:#dcfce7;
+  --ok-tx:#14532d;
+
+  --warn-bg:#fff7ed;
+  --warn-tx:#7c2d12;
+
+  --err-bg:#fee2e2;
+  --err-tx:#7f1d1d;
+
+  --shadow:0 14px 30px rgba(0,0,0,.10);
   --radius:16px;
 
-  --ok:#16a34a;
-  --danger:#b91c1c;
-  --warn:#b45309;
-
-  --wrap: 980px;           /* largeur max du contenu */
-  --gutter: 18px;          /* padding latéral */
-  --headerPadTop: 22px;
-  --headerPadBottom: 18px;
+  --wrap:980px;          /* largeur max des cartes */
+  --pad:18px;            /* padding horizontal global */
 }
 
+/* ---------- reset ---------- */
 *{ box-sizing:border-box; }
 html,body{ height:100%; }
-
 body{
   margin:0;
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, Helvetica, sans-serif;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
   color:var(--text);
-
-  /* header bleu + fond clair */
-  background:
-    linear-gradient(
-      180deg,
-      #0b3a6e 0%,
-      #0b3a6e 210px,
-      var(--bg) 210px
-    );
+  background: linear-gradient(180deg, var(--brand) 0%, var(--brand) 180px, var(--bg) 180px);
 }
 
-/* ================= HEADER ================= */
-
+/* ---------- header ---------- */
 header{
   color:#fff;
-  padding: var(--headerPadTop) var(--gutter) var(--headerPadBottom);
+  padding:22px var(--pad);
+  position:relative;
+  z-index:10; /* header au-dessus, mais sans recouvrir main */
 }
 
 .topbar{
-  max-width: var(--wrap);
-  margin: 0 auto;
+  max-width:var(--wrap);
+  margin:0 auto;
   display:flex;
-  gap: 14px;
+  gap:14px;
   align-items:flex-start;
   justify-content:space-between;
 }
 
 .brand h1{
   margin:0;
-  font-size: clamp(18px, 2.2vw, 22px);
-  letter-spacing: .2px;
+  font-size:20px;
+  letter-spacing:.2px;
 }
-
 .brand p{
-  margin: 6px 0 0;
-  opacity:.92;
-  font-size: 13px;
+  margin:6px 0 0;
+  opacity:.9;
+  font-size:13px;
 }
 
 .status{
   display:flex;
+  gap:10px;
   align-items:center;
   justify-content:flex-end;
-  gap:10px;
   flex-wrap:wrap;
 }
 
@@ -85,16 +81,17 @@ header{
   display:inline-flex;
   align-items:center;
   gap:8px;
-  padding: 8px 10px;
-  border-radius:999px;
   border:1px solid rgba(255,255,255,.25);
-  background: rgba(255,255,255,.10);
+  padding:8px 10px;
+  border-radius:999px;
   font-size:12px;
+  background:rgba(255,255,255,.10);
   backdrop-filter: blur(6px);
 }
-
 .pill .dot{
-  width:8px;height:8px;border-radius:50%;
+  width:8px;
+  height:8px;
+  border-radius:50%;
   background:#f87171;
 }
 .pill.ok .dot{ background:#34d399; }
@@ -103,347 +100,364 @@ header{
   border:1px solid rgba(255,255,255,.25);
   background:#fff;
   color:var(--brand);
-  padding: 9px 12px;
-  font-weight: 900;
-  border-radius: 12px;
+  padding:9px 12px;
+  font-weight:800;
+  border-radius:12px;
   cursor:pointer;
 }
 .btnTop.secondary{
-  background: transparent;
+  background:transparent;
   color:#fff;
 }
 
-/* ================= LAYOUT ================= */
-
+/* ---------- main layout (IMPORTANT: plus de margin négatif) ---------- */
 main{
-  /* IMPORTANT: plus de margin négative => plus de superposition */
-  max-width: var(--wrap);
-  margin: 0 auto;
-  padding: 0 var(--gutter) 44px;
+  max-width:var(--wrap);
+  margin:0 auto;
+  padding: 14px var(--pad) 40px;
+  position:relative;
+  z-index:1;
 }
 
 .grid{
-  /* 1 colonne partout */
-  display:grid;
-  grid-template-columns: 1fr;
-  gap: 16px;
-
-  /* on "remonte" visuellement dans le header sans overlap */
-  margin-top: -70px;
+  /* 1 colonne partout = plus pro, plus stable */
+  display:flex;
+  flex-direction:column;
+  gap:16px;
+  align-items:center;
 }
 
-/* si écran très petit, on réduit un peu la remontée */
-@media (max-width: 420px){
-  .grid{ margin-top: -50px; }
-}
-
+/* cartes */
 .card{
-  background: var(--card);
-  border: 1px solid rgba(219,227,240,.95);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding: 16px;
+  width:100%;
+  background:var(--card);
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow);
+  padding:16px;
 }
 
-/* cartes plus “pro” (typographie + rythme) */
+/* titres */
 h2{
-  margin: 0 0 10px;
-  font-size: 16px;
+  margin:0 0 10px;
+  font-size:16px;
 }
-h3{
-  margin: 14px 0 8px;
-  font-size: 14px;
-}
-
 .muted{
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.45;
+  color:var(--muted);
+  font-size:13px;
 }
-
 .tiny{
-  font-size: 12px;
-  color: var(--muted);
+  font-size:12px;
+  color:var(--muted);
 }
 
-/* ================= CALLOUTS ================= */
-
+/* callouts */
 .callout{
-  margin-top: 12px;
-  border-radius: 12px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  background: #f8fafc;
-  font-size: 13px;
+  border:1px solid var(--line);
+  border-radius:12px;
+  padding:12px 12px;
+  margin:10px 0;
+  background:#f8fafc;
+}
+.callout strong{ display:block; margin-bottom:4px; }
+.callout.blue{
+  border-left:4px solid #2b5aa6;
+}
+.callout.orange{
+  border-left:4px solid #f59e0b;
+  background:#fff7ed;
+}
+.callout.green{
+  border-left:4px solid #22c55e;
+  background:#f0fdf4;
 }
 
-.callout strong{
-  display:block;
-  margin-bottom: 4px;
-}
-
-.callout.blue{ border-left: 4px solid var(--brand2); }
-.callout.orange{ border-left: 4px solid #f59e0b; background:#fff7ed; }
-.callout.green{ border-left: 4px solid #22c55e; background:#f0fdf4; }
-
-/* ================= FORMS ================= */
-
+/* ---------- forms / panels (index.v3.js) ---------- */
 .label{
   display:block;
-  font-weight: 900;
-  margin: 12px 0 6px;
-  font-size: 13px;
+  font-weight:900;
+  font-size:13px;
+  margin:10px 0 6px;
 }
 
-input, select, textarea{
+input, textarea, select{
   width:100%;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 10px 11px;
-  font-size: 14px;
-  outline:none;
+  border:1px solid var(--line);
+  border-radius:12px;
+  padding:10px 12px;
+  font-size:14px;
   background:#fff;
+  outline:none;
 }
-
-textarea{ min-height: 90px; resize: vertical; }
-
-input:focus, select:focus, textarea:focus{
-  border-color:#9db7d8;
-  box-shadow: 0 0 0 3px rgba(27,95,168,.12);
-}
+textarea{ min-height:90px; resize:vertical; }
 
 .row{
   display:flex;
-  gap:10px;
+  gap:12px;
   flex-wrap:wrap;
 }
-.row > *{ flex:1; min-width: 180px; }
-
-/* ================= BUTTONS ================= */
-
-.btn{
-  width:100%;
-  padding: 11px 12px;
-  border-radius: 12px;
-  border:1px solid var(--line);
-  background:#fff;
-  font-weight: 900;
-  cursor:pointer;
-  transition: transform .05s ease, box-shadow .15s ease, border-color .15s ease;
-}
-.btn.primary{ background: var(--brand); border-color: var(--brand); color:#fff; }
-.btn.alt{ background:#0f3f7a; border-color:#0f3f7a; color:#fff; }
-.btn.small{ padding: 8px 10px; font-weight: 800; font-size: 12px; }
-
-.btn:disabled{ opacity:.55; cursor:not-allowed; }
-.btn:active{ transform: translateY(1px); }
-.btn:hover{ box-shadow: 0 10px 22px rgba(0,0,0,.08); border-color:#9db7d8; }
-.btn.primary:hover{ border-color: var(--brand); }
-.btn.alt:hover{ border-color: #0f3f7a; }
-
-.actionBox{
-  display:grid;
-  grid-template-columns: 1fr;
-  gap: 10px;
-  margin-top: 10px;
+.row > *{
+  flex:1;
+  min-width:220px;
 }
 
-/* Sur desktop, les deux boutons peuvent être côte à côte (sans changer la colonne globale) */
-@media (min-width: 740px){
-  .actionBox{ grid-template-columns: 1fr 1fr; }
+.stepWrap{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  margin-bottom:10px;
 }
-
-/* ================= MESSAGES ================= */
-
-.alert, .warn, .ok{
-  margin-top: 12px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  font-weight: 900;
-  display:none;
-}
-
-.alert{
-  border:1px solid #f2c2c2;
-  background:#fff5f5;
-  color: var(--danger);
-}
-
-.warn{
-  border:1px solid #fed7aa;
-  background:#fff7ed;
-  color: var(--warn);
-}
-
-.ok{
-  border:1px solid #bbf7d0;
-  background:#f0fdf4;
-  color:#14532d;
-}
-
-/* ================= STEP HEADER ================= */
 
 .step{
   display:inline-flex;
   align-items:center;
   gap:8px;
+  font-weight:900;
   font-size:12px;
-  padding: 7px 10px;
+  padding:6px 10px;
   border-radius:999px;
   border:1px solid var(--line);
   background:#f8fafc;
-  font-weight: 900;
-  color: var(--text);
 }
 
-.stepWrap{
+.actionBox{
   display:flex;
-  justify-content:space-between;
-  align-items:center;
-  gap:12px;
-  margin-bottom: 10px;
+  gap:10px;
+  margin:10px 0 12px;
+  flex-wrap:wrap;
 }
+
+.panel{
+  display:none;
+  border:1px solid var(--line);
+  background:#fff;
+  border-radius:14px;
+  padding:12px;
+  margin-top:12px;
+}
+
+.help{
+  margin:10px 0 0;
+  color:var(--muted);
+  font-size:12px;
+}
+
+.linkRow{
+  margin-top:10px;
+  display:flex;
+  justify-content:flex-end;
+}
+.linkBtn{
+  border:none;
+  background:transparent;
+  color:var(--brand);
+  font-weight:800;
+  cursor:pointer;
+  padding:0;
+}
+
+/* ---------- buttons ---------- */
+.btn{
+  width:100%;
+  padding:11px 12px;
+  border-radius:12px;
+  border:1px solid var(--line);
+  background:#fff;
+  font-weight:900;
+  cursor:pointer;
+}
+.btn.primary{
+  background:var(--brand);
+  border-color:var(--brand);
+  color:#fff;
+}
+.btn.alt{
+  background:#0f274a;
+  border-color:#0f274a;
+  color:#fff;
+}
+.btn:disabled{
+  opacity:.55;
+  cursor:not-allowed;
+}
+
+/* ---------- banners ---------- */
+.alert,.ok,.warn{
+  display:none;
+  margin-top:12px;
+  padding:10px 12px;
+  border-radius:12px;
+  border:1px solid var(--line);
+  font-weight:900;
+}
+.alert{ background:var(--err-bg); color:var(--err-tx); border-color:#fecaca; }
+.ok{ background:var(--ok-bg); color:var(--ok-tx); border-color:#bbf7d0; }
+.warn{ background:var(--warn-bg); color:var(--warn-tx); border-color:#fed7aa; }
 
 .divider{
   height:1px;
-  background: var(--line);
-  margin: 14px 0;
+  background:var(--line);
+  margin:14px 0;
 }
 
-/* ================= PANELS ================= */
-
-.panel{
-  margin-top: 12px;
-  border: 1px solid var(--line);
-  background:#f8fafc;
-  border-radius: 12px;
-  padding: 12px;
-  display:none;
-}
-
-.linkRow{ display:flex; justify-content:flex-end; margin-top:10px; }
-.linkBtn{
-  border:0;
-  background:transparent;
-  color: var(--brand2);
-  font-weight: 900;
-  cursor:pointer;
-  padding:0;
-  text-decoration: underline;
-  font-size: 12px;
-}
-
-/* ================= APPT LIST ================= */
-
-.apptList{ margin-top: 12px; display:flex; flex-direction:column; gap:10px; }
-.apptCard{
-  border:1px solid var(--line);
-  border-radius: 12px;
-  padding: 10px 12px;
-  background:#fff;
-}
-.apptTop{ display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
-
-.badge{
-  font-size:12px;
-  font-weight: 900;
-  padding: 6px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background:#f8fafc;
-  white-space:nowrap;
-}
-.badge.pending{ border-color:#fed7aa; background:#fff7ed; color:var(--warn); }
-.badge.validated{ border-color:#bbf7d0; background:#f0fdf4; color:#14532d; }
-.badge.refused{ border-color:#f2c2c2; background:#fff5f5; color:var(--danger); }
-.badge.cancelled{ border-color:#e5e7eb; background:#f9fafb; color:#374151; }
-
-/* ================= CAL (si tu l’utilises côté client) ================= */
-
+/* ---------- calendar (index.v3.js) ---------- */
 .calHeader{
   display:flex;
-  align-items:flex-start;
+  align-items:flex-end;
   justify-content:space-between;
   gap:12px;
-  margin-top:14px;
+  margin-top:10px;
+  flex-wrap:wrap;
 }
-
-.calNav{ display:flex; gap:8px; align-items:center; }
-
+.calTitle{
+  font-weight:1000;
+  font-size:14px;
+}
+.calSub{
+  font-size:12px;
+  color:var(--muted);
+  margin-top:3px;
+}
+.calNav{
+  display:flex;
+  gap:8px;
+  align-items:center;
+}
 .calBtn{
-  padding: 8px 10px;
-  border-radius: 12px;
   border:1px solid var(--line);
   background:#fff;
-  font-weight: 900;
+  border-radius:12px;
+  padding:8px 10px;
+  font-weight:900;
   cursor:pointer;
-  font-size: 12px;
 }
+
+.calLegend{
+  display:flex;
+  gap:12px;
+  flex-wrap:wrap;
+  margin:10px 0 10px;
+  color:var(--muted);
+  font-size:12px;
+}
+.dotKey{ display:inline-flex; gap:8px; align-items:center; }
+.kdot{
+  width:10px; height:10px; border-radius:50%;
+  border:1px solid var(--line);
+}
+.kfree{ background:#dcfce7; border-color:#bbf7d0; }
+.kblocked{ background:#f3f4f6; }
+.kselected{ background:#dbeafe; border-color:#bfdbfe; }
 
 .calGrid{
-  margin-top: 10px;
+  /* si écran trop petit => scroll horizontal propre */
+  width:100%;
+  overflow-x:auto;
   border:1px solid var(--line);
-  border-radius: 16px;
-  overflow:hidden;
+  border-radius:14px;
   background:#fff;
-  box-shadow: 0 10px 25px rgba(0,0,0,.06);
 }
 
 .calRow{
   display:grid;
-  grid-template-columns: 92px repeat(5, 1fr);
-  border-top:1px solid #e5e7eb;
-  min-height:44px;
+  grid-template-columns: 74px repeat(5, minmax(110px, 1fr));
+  min-width: 720px; /* force scroll sur petit écran */
 }
-.calRow:first-child{ border-top:0; }
 
 .calCell{
-  padding: 10px;
-  border-left:1px solid #e5e7eb;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  font-size: 12px;
-  user-select:none;
+  border-right:1px solid #eef2f7;
+  border-bottom:1px solid #eef2f7;
+  padding:9px 10px;
+  font-size:12px;
 }
-.calCell:first-child{ border-left:0; }
+.calRow .calCell:last-child{ border-right:none; }
 
 .timeCell{
-  justify-content:flex-start;
-  font-weight: 900;
   background:#f8fafc;
+  font-weight:1000;
+  color:#334155;
 }
 
 .dayHead{
-  font-weight: 900;
   background:#f8fafc;
+  font-weight:1000;
+  text-align:center;
 }
 
-/* slots */
 .slot{
-  cursor:pointer;
-  position:relative;
-  background:#ecfdf5;
-  transition: box-shadow .15s ease, transform .05s ease, background .15s ease;
+  text-align:center;
+  user-select:none;
 }
-.slot:hover{ box-shadow: inset 0 0 0 2px rgba(27,95,168,.10); }
-.slot:active{ transform: scale(.995); }
 
-.slot.blocked, .slot.disabled{
-  cursor:not-allowed;
+.slot.free{
+  background:#f0fdf4;
+  cursor:pointer;
+}
+.slot.blocked{
   background:#f3f4f6;
-  color:#9ca3af;
+  color:#94a3b8;
 }
 .slot.selected{
   background:#dbeafe;
-  box-shadow: inset 0 0 0 2px rgba(27,95,168,.35);
+  outline:2px solid #93c5fd;
+  cursor:pointer;
+}
+.slot.disabled{
+  cursor:not-allowed;
+  opacity:.85;
 }
 
-@media (max-width: 920px){
-  .calRow{ grid-template-columns: 82px repeat(5, 1fr); }
-  .calCell{ padding: 8px; font-size: 11px; }
+.miniTag{
+  display:inline-block;
+  padding:3px 8px;
+  border-radius:999px;
+  border:1px solid var(--line);
+  font-size:11px;
+  font-weight:900;
+  background:#fff;
 }
+.miniTag.outlook{
+  background:#eef2ff;
+  border-color:#c7d2fe;
+  color:#3730a3;
+}
+
+/* ---------- appointments list ---------- */
+.apptList{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.apptCard{
+  border:1px solid var(--line);
+  border-radius:14px;
+  padding:10px 12px;
+  background:#fff;
+}
+.apptTop{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:10px;
+}
+.badge{
+  font-size:12px;
+  font-weight:1000;
+  padding:6px 10px;
+  border-radius:999px;
+  border:1px solid var(--line);
+  background:#f8fafc;
+  text-transform:lowercase;
+}
+.badge.pending{ background:#ffedd5; border-color:#fed7aa; }
+.badge.validated{ background:#dcfce7; border-color:#bbf7d0; }
+.badge.refused{ background:#fee2e2; border-color:#fecaca; }
+.badge.cancelled{ background:#f3f4f6; border-color:#e5e7eb; }
+
+/* ---------- responsive micro ---------- */
 @media (max-width: 520px){
-  .calRow{ grid-template-columns: 72px repeat(5, 1fr); }
-  .timeCell{ font-size: 11px; }
+  .brand h1{ font-size:18px; }
+  .topbar{ align-items:flex-start; }
+  .btnTop{ width:100%; }
 }
