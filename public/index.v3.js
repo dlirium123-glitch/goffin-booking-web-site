@@ -1,10 +1,16 @@
 // =======================================================
 // Goffin Booking — index.v3.js
-// Étape 1 (A1): Profil société obligatoire + gating
-// Source unique planning: freeSlots
-// ✅ Compatible avec tes Firestore rules (freeSlots client update: status + updatedAt seulement)
+// Option A (rules strictes) :
+// - source unique freeSlots
+// - le client ne modifie QUE freeSlots.status + freeSlots.updatedAt
+// - PAS de busySlots
+// - badge "Outlook" sur blockedReason=outlook (lecture seulement)
+//
+// ETAPE 1 (pro) :
+// - Profil client = Société + BCE + Tel + Adresse siège (HQ)
+// - Adresse chantier = obligatoire lors de la demande de RDV (appointment.siteAddress)
 // =======================================================
-const INDEX_VERSION = "v3-2026-02-15-A1-profile";
+const INDEX_VERSION = "v3-2026-02-15-step1-A-strict-freeSlots";
 console.log("index.v3.js chargé ✅", INDEX_VERSION);
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -326,60 +332,51 @@ document.addEventListener("DOMContentLoaded", async () => {
     return true;
   }
 
-  // ---------- UI: Profile (A1) ----------
+  // ---------- UI: Profile ----------
   function renderProfileForm(userEmail) {
     right.innerHTML = `
       <div class="stepWrap">
-        <span class="step">Étape 2/3 — Profil société</span>
+        <span class="step">Étape 2/3 — Profil client</span>
         <span class="muted" style="font-size:12px">${escapeHtml(userEmail || "")}</span>
       </div>
 
-      <div class="callout blue">
-        <strong>Obligatoire (une seule fois)</strong>
-        <div class="muted">Ces informations seront utilisées pour vos demandes de rendez-vous.</div>
-      </div>
+      <p class="muted">Complétez vos informations société (1 minute).</p>
 
-      <label class="label">Nom de la société</label>
-      <input id="p_companyName" placeholder="Ex: Goffin SRL"/>
+      <label class="label">Société</label>
+      <input id="p_company" placeholder="Nom de la société"/>
 
       <div class="row">
         <div>
           <label class="label">N° d’entreprise (BCE)</label>
-          <input id="p_enterpriseNumber" placeholder="Ex: BE0123456789"/>
+          <input id="p_vat" placeholder="ex: BE0123456789"/>
         </div>
         <div>
           <label class="label">Téléphone</label>
-          <input id="p_phone" placeholder="Ex: +32 4 123 45 67"/>
+          <input id="p_phone" placeholder="ex: +32 ..."/>
         </div>
       </div>
 
-      <label class="label">Adresse du siège social</label>
-      <textarea id="p_seatAddress" placeholder="Rue, n°, code postal, ville"></textarea>
+      <label class="label">Adresse du siège social (obligatoire)</label>
+      <textarea id="p_hq" placeholder="Rue, n°, code postal, ville"></textarea>
 
-      <button id="btnSaveProfile" class="btn primary" style="margin-top:12px" type="button">Enregistrer</button>
+      <button id="btnSaveProfile" class="btn primary" style="margin-top:12px" type="button">
+        Enregistrer mon profil
+      </button>
 
       <div id="uiBanner" class="alert" style="display:none"></div>
     `;
   }
 
-  function normalizeEnterpriseNumber(s) {
-    return String(s || "")
-      .trim()
-      .toUpperCase()
-      .replace(/\s+/g, "")
-      .replace(/^BE0?/, "BE"); // simple normalisation
-  }
-
-  function validateProfileA1(data) {
+  function validateProfile(data) {
     const errors = [];
-    if (!data.companyName || data.companyName.length < 2) errors.push("Veuillez indiquer le nom de la société.");
-    if (!data.enterpriseNumber || data.enterpriseNumber.length < 6) errors.push("Veuillez indiquer le n° d’entreprise (ex: BE...).");
+    if (!data.company || data.company.length < 2) errors.push("Veuillez indiquer la société.");
+    if (!data.vat || data.vat.length < 6) errors.push("Veuillez indiquer le numéro BCE (ex: BE...).");
     if (!data.phone || data.phone.length < 6) errors.push("Veuillez indiquer un numéro de téléphone.");
-    if (!data.seatAddress || data.seatAddress.length < 8) errors.push("Veuillez indiquer l’adresse du siège social.");
+    if (!data.hqAddress || data.hqAddress.length < 8) errors.push("Veuillez indiquer l’adresse du siège social.");
     return errors;
   }
 
-  // ---------- UI: Calendar / Booking (shell inchangé) ----------
+  // ---------- UI: Booking ----------
   function renderBookingShell(userEmail) {
     right.innerHTML = `
       <div class="stepWrap">
@@ -413,6 +410,9 @@ document.addEventListener("DOMContentLoaded", async () => {
       <div class="calGrid" id="calGrid"></div>
 
       <div class="divider"></div>
+
+      <label class="label">Adresse du chantier (obligatoire)</label>
+      <textarea id="apptSiteAddress" placeholder="Rue, n°, code postal, ville"></textarea>
 
       <label class="label">Note (optionnel)</label>
       <textarea id="apptNote" placeholder="Détails utiles (type de contrôle, accès, etc.)"></textarea>
@@ -527,12 +527,17 @@ document.addEventListener("DOMContentLoaded", async () => {
         ? `${dayLabel(start)} • ${String(start.getHours()).padStart(2, "0")}:${String(start.getMinutes()).padStart(2, "0")}`
         : "(date inconnue)";
 
+      const site = a.siteAddress
+        ? `<div class="tiny" style="margin-top:6px"><b>Chantier :</b> ${escapeHtml(a.siteAddress)}</div>`
+        : "";
+
       return `
         <div class="apptCard">
           <div class="apptTop">
             <div>
               <div style="font-weight:900">${escapeHtml(when)}</div>
-              <div class="muted" style="margin-top:4px">${escapeHtml(a.note || "")}</div>
+              ${site}
+              <div class="muted" style="margin-top:6px">${escapeHtml(a.note || "")}</div>
             </div>
             <div class="badge ${badgeClass}">${escapeHtml(st)}</div>
           </div>
@@ -541,8 +546,17 @@ document.addEventListener("DOMContentLoaded", async () => {
     }).join("");
   }
 
-  // ⚠️ IMPORTANT: respect rules freeSlots (client update only: status, updatedAt)
-  async function bookSlot(db, user, selected, note, clientProfile) {
+  // ========= IMPORTANT (Option A) =========
+  // Ici on update freeSlots avec UNIQUEMENT:
+  // - status
+  // - updatedAt
+  // (pour matcher tes rules strictes)
+  async function bookSlot(db, user, selected, note) {
+    const siteAddress = (document.getElementById("apptSiteAddress")?.value || "").trim();
+    if (!siteAddress || siteAddress.length < 6) {
+      throw new Error("Veuillez indiquer l’adresse complète du chantier.");
+    }
+
     const apptRef = db.collection("appointments").doc();
     const lockRef = db.collection("slots").doc();
     const freeRef = db.collection("freeSlots").doc(selected.freeSlotDocId);
@@ -559,28 +573,21 @@ document.addEventListener("DOMContentLoaded", async () => {
         throw new Error("Ce créneau n’est plus disponible.");
       }
 
-      // ✅ client autorisé: status + updatedAt uniquement
+      // ✅ Option A: status + updatedAt uniquement
       tx.update(freeRef, {
         status: "blocked",
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
 
-      // snapshot profil société dans l'appointment (pro)
       tx.set(apptRef, {
         uid: user.uid,
         email: (user.email || "").toLowerCase(),
-
-        companyName: clientProfile.companyName,
-        enterpriseNumber: clientProfile.enterpriseNumber,
-        phone: clientProfile.phone,
-        seatAddress: clientProfile.seatAddress,
-
         start: startTs,
         end: endTs,
+        siteAddress: siteAddress,
         status: "pending",
         note: note || "",
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
 
       tx.set(lockRef, {
@@ -626,9 +633,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   let selectedSlot = null; // { key, startDate, endDate, freeSlotDocId }
   let lastFreeSlotsMap = new Map();
 
-  // Cache profil client (une fois chargé)
-  let cachedClientProfile = null;
-
   function makeOutlookLabel() {
     return `<span class="miniTag outlook">Outlook</span>`;
   }
@@ -662,10 +666,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         start.setMinutes(mins);
 
         const key = `${dateKey(start)}_${String(start.getHours()).padStart(2, "0")}${String(start.getMinutes()).padStart(2, "0")}`;
-
         const freeDoc = lastFreeSlotsMap.get(key);
 
-        // defaults
         let status = "blocked";
         let disabled = true;
         let title = "Indisponible";
@@ -677,7 +679,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           title = "Non généré";
         } else {
           const st = String(freeDoc.status || "blocked").toLowerCase();
-          const br = String(freeDoc.blockedReason || "").toLowerCase();
+          const br = String(freeDoc.blockedReason || "").toLowerCase(); // lecture seulement
 
           if (st === "free") {
             status = "free";
@@ -692,8 +694,6 @@ document.addEventListener("DOMContentLoaded", async () => {
               label = makeOutlookLabel();
             } else if (br === "validated") {
               title = "Indisponible (déjà validé)";
-            } else if (br === "booking") {
-              title = "Indisponible (réservé)";
             } else if (br) {
               title = `Indisponible (${br})`;
             } else {
@@ -736,6 +736,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         const key = cell.getAttribute("data-slotkey");
         if (!key) return;
 
+        // toggle off
         if (selectedSlot && selectedSlot.key === key) {
           selectedSlot = null;
           const b = document.getElementById("btnBook");
@@ -753,6 +754,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         const mm = parseInt(hm.slice(2, 4), 10);
         const start = new Date(yy, (mo - 1), dd, hh, mm, 0, 0);
 
+        // règle <48h
         const min48now = new Date(Date.now() + 48 * 60 * 60 * 1000);
         if (start < min48now) {
           showBanner("warn", "Ce créneau est à moins de 48h : réservation impossible.");
@@ -764,6 +766,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         selectedSlot = { key, startDate: start, endDate: end, freeSlotDocId: freeDoc.id };
         const b = document.getElementById("btnBook");
         if (b) b.disabled = false;
+
         await refreshCalendarAndAppointments(user);
       });
     });
@@ -806,14 +809,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     document.getElementById("btnBook")?.addEventListener("click", async () => {
       hideBanner();
       const btnBook = document.getElementById("btnBook");
-
       if (!selectedSlot) {
         showBanner("alert", "Veuillez sélectionner un créneau.");
-        return;
-      }
-
-      if (!cachedClientProfile) {
-        showBanner("alert", "Profil société manquant. Recharge la page ou complète ton profil.");
         return;
       }
 
@@ -821,11 +818,12 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (btnBook) btnBook.disabled = true;
         const note = (document.getElementById("apptNote")?.value || "").trim();
 
-        await bookSlot(db, user, selectedSlot, note, cachedClientProfile);
+        await bookSlot(db, user, selectedSlot, note);
 
         showBanner("ok", "Demande envoyée ✅ (en attente de validation)");
         selectedSlot = null;
         if (btnBook) btnBook.disabled = true;
+
         await refreshCalendarAndAppointments(user);
       } catch (e) {
         console.error(e);
@@ -844,7 +842,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     const didRedirect = await redirectIfAdmin(db, user);
     if (didRedirect) return;
 
-    // Lire profil client
     let snap;
     try {
       snap = await db.collection("clients").doc(user.uid).get();
@@ -860,7 +857,6 @@ document.addEventListener("DOMContentLoaded", async () => {
       return;
     }
 
-    // Profil absent => forcer A1
     if (!snap.exists) {
       renderProfileForm(user.email || "");
       setStatus(true);
@@ -870,15 +866,16 @@ document.addEventListener("DOMContentLoaded", async () => {
         hideBanner();
 
         const data = {
-          companyName: (document.getElementById("p_companyName")?.value || "").trim(),
-          enterpriseNumber: normalizeEnterpriseNumber(document.getElementById("p_enterpriseNumber")?.value || ""),
           email: (user.email || "").toLowerCase(),
+          company: (document.getElementById("p_company")?.value || "").trim(),
+          vat: (document.getElementById("p_vat")?.value || "").trim(),
           phone: (document.getElementById("p_phone")?.value || "").trim(),
-          seatAddress: (document.getElementById("p_seatAddress")?.value || "").trim(),
+          hqAddress: (document.getElementById("p_hq")?.value || "").trim(),
+          status: "ok",
           updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
         };
 
-        const errs = validateProfileA1(data);
+        const errs = validateProfile(data);
         if (errs.length) {
           showBanner("alert", errs[0]);
           return;
@@ -886,21 +883,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         try {
           btn.disabled = true;
-
           await db.collection("clients").doc(user.uid).set(
-            {
-              ...data,
-              createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-            },
+            { ...data, createdAt: firebase.firestore.FieldValue.serverTimestamp() },
             { merge: true }
           );
-
-          cachedClientProfile = {
-            companyName: data.companyName,
-            enterpriseNumber: data.enterpriseNumber,
-            phone: data.phone,
-            seatAddress: data.seatAddress,
-          };
 
           renderBookingShell(user.email || "");
           selectedSlot = null;
@@ -910,7 +896,6 @@ document.addEventListener("DOMContentLoaded", async () => {
           await bindCalendarNav(user);
           await bindBookButton(user);
           await refreshCalendarAndAppointments(user);
-
         } catch (e) {
           console.error(e);
           if (!isProbablyAdblockNetworkError(e)) {
@@ -925,15 +910,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       return;
     }
-
-    // Profil existant => cache + accès booking
-    const d = snap.data() || {};
-    cachedClientProfile = {
-      companyName: String(d.companyName || ""),
-      enterpriseNumber: String(d.enterpriseNumber || ""),
-      phone: String(d.phone || ""),
-      seatAddress: String(d.seatAddress || ""),
-    };
 
     renderBookingShell(user.email || "");
     selectedSlot = null;
@@ -952,7 +928,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (!user) {
       __adminChecked = false;
       __isAdminCached = false;
-      cachedClientProfile = null;
 
       renderAuth();
       wireAuthHandlers(auth);
