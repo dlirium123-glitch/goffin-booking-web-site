@@ -6,7 +6,7 @@
   <title>Admin — Goffin Booking</title>
 
   <!-- CSS (cache-bust) -->
-  <link rel="stylesheet" href="/admin.css" />
+  <link rel="stylesheet" href="/admin.css?v=2026-02-15-1" />
 
   <!-- Firebase (Compat) -->
   <script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -40,7 +40,7 @@
 <main>
   <div class="grid">
 
-    <!-- LEFT: rendez-vous + filtres (IDs requis par admin.v3.js) -->
+    <!-- LEFT: rendez-vous + filtres -->
     <section class="card">
       <h2>Rendez-vous</h2>
 
@@ -74,35 +74,25 @@
 
       <div class="hr"></div>
 
-      <!-- Génération freeSlots (IDs requis par admin.v3.js) -->
       <h2>Planning public (freeSlots)</h2>
       <p class="muted">
         Génère les créneaux visibles côté client (lun→ven, 09:30→17:30, blocs 90 min) sur 8 semaines.
       </p>
+
       <div class="row">
         <button class="btn primary" id="btnGenFreeSlots">Générer 8 semaines</button>
         <button class="btn" id="btnGenPreview">Prévisualiser (console)</button>
       </div>
+
       <div id="slotsMsg" class="alert"></div>
       <div id="slotsOk" class="ok"></div>
     </section>
 
-    <!-- RIGHT: planning cali + modifs (IDs requis) -->
+    <!-- RIGHT: planning + modifs -->
     <section class="card">
       <h2>Planning (vue semaine)</h2>
       <p class="muted">Lecture seule — synchronisé avec Outlook</p>
 
-      <!-- Header des jours (visuel) -->
-      <div class="planningHeader" aria-hidden="true">
-        <div></div>
-        <div class="dayHead">Lun<span>(—)</span></div>
-        <div class="dayHead">Mar<span>(—)</span></div>
-        <div class="dayHead">Mer<span>(—)</span></div>
-        <div class="dayHead">Jeu<span>(—)</span></div>
-        <div class="dayHead">Ven<span>(—)</span></div>
-      </div>
-
-      <!-- Grille remplie ensuite par JS -->
       <div id="planningGrid" class="planningGrid"></div>
 
       <div class="hr"></div>
@@ -118,6 +108,7 @@
             <option value="all">Toutes</option>
           </select>
         </div>
+
         <div style="display:flex;align-items:flex-end;gap:10px">
           <button class="btn primary" id="btnRefreshModifs">Rafraîchir</button>
         </div>
@@ -149,12 +140,11 @@
       <button class="btn" id="closeLogin">Annuler</button>
     </div>
 
-    <!-- ✅ important : garde-le caché par défaut, JS l'affiche si besoin -->
     <div id="loginErr" class="alert" style="display:none"></div>
   </div>
 </div>
 
-<!-- Cache-bust -->
+<!-- JS Admin -->
 <script defer src="/admin.v3.js?v=admin-2026-02-10-2"></script>
 </body>
 </html>
