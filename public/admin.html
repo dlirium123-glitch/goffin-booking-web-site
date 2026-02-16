@@ -5,7 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Admin — Goffin Booking</title>
 
-  <link rel="stylesheet" href="/admin.css?v=2026-02-16-2" />
+  <!-- ✅ évite l’indexation -->
+  <meta name="robots" content="noindex,nofollow" />
+
+  <link rel="stylesheet" href="/admin.css?v=2026-02-16-3" />
 
   <!-- Firebase (Compat) -->
   <script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -15,6 +18,12 @@
 </head>
 
 <body>
+<noscript>
+  <div style="padding:12px; font-weight:900;">
+    JavaScript est requis pour accéder à l’admin.
+  </div>
+</noscript>
+
 <header>
   <div class="topbar">
     <div class="brand">
@@ -65,6 +74,9 @@
         </div>
       </div>
 
+      <!-- ✅ bannière état sync Outlook (lit syncHealth/outlook) -->
+      <div id="syncHealthBanner" class="warn" style="display:none" hidden></div>
+
       <div id="apptMsg" class="alert"></div>
       <div id="apptOk" class="ok"></div>
 
@@ -83,6 +95,41 @@
       </div>
       <div id="slotsMsg" class="alert"></div>
       <div id="slotsOk" class="ok"></div>
+
+      <div class="hr"></div>
+
+      <h2>Outlook Sync</h2>
+      <p class="muted">
+        La synchronisation tourne automatiquement via GitHub Actions (cron).
+        <br />
+        Si besoin, tu peux la relancer manuellement (Run workflow).
+      </p>
+
+      <div class="row">
+        <a
+          class="btn primary"
+          id="btnOpenOutlookWorkflow"
+          href="https://github.com/dlirium123-glitch/goffin-booking-web-site/actions/workflows/outlook-sync.yml"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Ouvrir “Outlook sync” (Run workflow)
+        </a>
+
+        <a
+          class="btn"
+          id="btnOpenActionsAll"
+          href="https://github.com/dlirium123-glitch/goffin-booking-web-site/actions"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Tous les workflows
+        </a>
+      </div>
+
+      <div class="warn" style="display:block; margin-top:10px;">
+        ✅ GitHub → bouton <b>Run workflow</b> → relancer si la sync automatique ne passe pas.
+      </div>
     </section>
 
     <!-- RIGHT -->
@@ -140,6 +187,6 @@
   </div>
 </div>
 
-<script defer src="/admin.v3.js?v=admin-2026-02-16-2"></script>
+<script defer src="/admin.v3.js?v=admin-2026-02-16-3"></script>
 </body>
 </html>

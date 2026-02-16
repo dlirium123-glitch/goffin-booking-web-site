@@ -11,7 +11,6 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   deploy:
@@ -22,7 +21,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node (with cache)
         uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -36,10 +35,6 @@ jobs:
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-
-      # (Optionnel) Vérif rapide que firebase.json existe
-      # - name: Sanity check
-      #   run: test -f firebase.json
 
       - name: Deploy to Firebase Hosting
         run: firebase deploy --only hosting --project goffin-booking-web

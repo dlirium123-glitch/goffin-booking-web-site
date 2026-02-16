@@ -11,7 +11,6 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   sync:
@@ -22,35 +21,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # -------------------------------
-      # Setup Node avec cache npm
-      # -------------------------------
-      - name: Setup Node
+      - name: Setup Node (with cache)
         uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
           cache-dependency-path: tools/outlook-sync/package-lock.json
 
-      # -------------------------------
-      # Auth Google via service account
-      # -------------------------------
-      - name: Google Auth
+      - name: Google Auth (service account)
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
 
-      # -------------------------------
-      # Install deps propre (ci)
-      # -------------------------------
       - name: Install deps
         working-directory: tools/outlook-sync
         run: npm ci
 
-      # -------------------------------
-      # Vérification secrets (safe)
-      # -------------------------------
-      - name: Validate required secrets
+      - name: Validate secrets (no output)
         env:
           OUTLOOK_ICS_URL: ${{ secrets.OUTLOOK_ICS_URL }}
         run: |
@@ -60,9 +47,6 @@ jobs:
           fi
           echo "✅ OUTLOOK_ICS_URL present"
 
-      # -------------------------------
-      # RUN SYNC (avec protection anti-storm)
-      # -------------------------------
       - name: Run sync
         working-directory: tools/outlook-sync
         env:
@@ -70,15 +54,8 @@ jobs:
           OUTLOOK_ICS_URL: "${{ secrets.OUTLOOK_ICS_URL }}"
           DAYS_FORWARD: "90"
           TZ: "Europe/Brussels"
-
-          # 🔒 Protection contre conflict storm
-          MAX_BLOCK_RATE: "0.60"     # abort si >60% des slots touchés
-          MAX_CONFLICTS: "25"        # abort si >25 conflits nouveaux
         run: node sync.js
 
-      # -------------------------------
-      # Résumé visible dans GitHub
-      # -------------------------------
       - name: Summary
         if: always()
         run: |
@@ -87,5 +64,3 @@ jobs:
           echo "- Frequency: every 30 minutes" >> $GITHUB_STEP_SUMMARY
           echo "- DAYS_FORWARD: 90" >> $GITHUB_STEP_SUMMARY
           echo "- TZ: Europe/Brussels" >> $GITHUB_STEP_SUMMARY
-          echo "- MAX_BLOCK_RATE: 0.60" >> $GITHUB_STEP_SUMMARY
-          echo "- MAX_CONFLICTS: 25" >> $GITHUB_STEP_SUMMARY

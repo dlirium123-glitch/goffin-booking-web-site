@@ -1,6 +1,7 @@
 /* =========================================
    Admin — Goffin Booking (PRO)
    Compatible admin.html + admin.v3.js
+   Version: 2026-02-16-3
    ========================================= */
 
 :root{
@@ -105,6 +106,15 @@ header{
 .btnTop.secondary{
   background: transparent;
   color:#fff;
+}
+
+/* ✅ focus visible (UX clavier) */
+.btnTop:focus-visible,
+.btn:focus-visible,
+input:focus-visible,
+select:focus-visible{
+  outline: 3px solid rgba(255,255,255,.35);
+  outline-offset: 2px;
 }
 
 main{
@@ -277,7 +287,7 @@ input:focus, select:focus{
 .badge.cancelled{ border-color:#e5e7eb; background:#f9fafb; color:#374151; }
 .badge.late{ border-color:#fed7aa; background:#fff7ed; color:#b45309; }
 
-.alert, .ok{
+.alert, .ok, .warn{
   display:none;
   margin-top:10px;
   padding: 10px 12px;
@@ -287,6 +297,7 @@ input:focus, select:focus{
 
 .alert{ border:1px solid #fecaca; background:#fff5f5; color:#b91c1c; }
 .ok{ border:1px solid #bbf7d0; background:#f0fdf4; color:#14532d; }
+.warn{ border:1px solid #fed7aa; background:#fff7ed; color:#9a3412; }
 
 .overlay{
   position:fixed;
@@ -314,6 +325,14 @@ input:focus, select:focus{
 
 .modalActions{
   margin-top:12px;
+}
+
+/* ✅ link button */
+#btnOpenActions{
+  text-decoration:none;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
 }
 
 #planningGrid{

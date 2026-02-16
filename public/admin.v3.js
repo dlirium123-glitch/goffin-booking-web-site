@@ -1,9 +1,9 @@
 /* ===============================
    Admin — Goffin Booking (v3)
-   Version: 2026-02-16
+   Version: 2026-02-16-3
    =============================== */
 /* eslint-disable no-console */
-const ADMIN_VERSION = "admin-2026-02-16-2"
+const ADMIN_VERSION = "admin-2026-02-16-3"
 console.log("admin.v3.js chargé ✅", ADMIN_VERSION)
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -35,12 +35,15 @@ document.addEventListener("DOMContentLoaded", async () => {
     // ignore
   }
 
+  // Collections
   const appointmentsCol = db.collection("appointments")
   const modifsCol = db.collection("modificationRequests")
   const adminsCol = db.collection("admins")
   const slotsCol = db.collection("slots")
   const freeSlotsCol = db.collection("freeSlots")
+  const syncHealthCol = db.collection("syncHealth")
 
+  // DOM essentiels
   const pill = document.getElementById("pillStatus")
   const statusText = document.getElementById("statusText")
   const btnLogin = document.getElementById("btnLogin")
@@ -48,22 +51,35 @@ document.addEventListener("DOMContentLoaded", async () => {
   const overlay = document.getElementById("overlay")
   const loginErr = document.getElementById("loginErr")
 
+  // Sync health
+  const syncHealthBanner = document.getElementById("syncHealthBanner")
+
+  // Appointments
   const apptList = document.getElementById("apptList")
   const apptEmpty = document.getElementById("apptEmpty")
   const apptMsg = document.getElementById("apptMsg")
   const apptOk = document.getElementById("apptOk")
 
+  // Modifs (optionnels)
   const modifList = document.getElementById("modifList")
   const modifEmpty = document.getElementById("modifEmpty")
   const modifMsg = document.getElementById("modifMsg")
   const modifOk = document.getElementById("modifOk")
 
+  // FreeSlots gen
   const btnGenFreeSlots = document.getElementById("btnGenFreeSlots")
   const btnGenPreview = document.getElementById("btnGenPreview")
   const slotsMsg = document.getElementById("slotsMsg")
   const slotsOk = document.getElementById("slotsOk")
 
+  // Planning semaine
   const planningGrid = document.getElementById("planningGrid")
+
+  // Force Outlook Sync button
+  const btnForceOutlookSync = document.getElementById("btnForceOutlookSync")
+  const btnOpenActions = document.getElementById("btnOpenActions")
+  const syncRunMsg = document.getElementById("syncRunMsg")
+  const syncRunOk = document.getElementById("syncRunOk")
 
   const mustHave = [pill, statusText, btnLogin, btnLogout, overlay, loginErr, apptList, apptEmpty, apptMsg, apptOk]
   if (mustHave.some((x) => !x)) {
@@ -72,7 +88,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   let isAdmin = false
+  let _unsubSyncHealth = null
 
+  // ====== CONFIG ======
   const SLOT_MINUTES = 90
   const DAY_START_MIN = 9 * 60 + 30
   const DAY_END_MIN = 17 * 60 + 30
@@ -84,6 +102,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     VALIDATED: "validated",
   }
 
+  // ====== UI helpers ======
   function setStatus(isAdminLogged) {
     if (isAdminLogged) {
       pill.classList.add("ok")
@@ -101,49 +120,89 @@ document.addEventListener("DOMContentLoaded", async () => {
   function showErr(el, t) {
     if (!el) return
     el.style.display = "block"
+    el.hidden = false
     el.textContent = t
   }
 
   function hideErr(el) {
     if (!el) return
     el.style.display = "none"
+    el.hidden = true
     el.textContent = ""
   }
 
   function showOk(el, t) {
     if (!el) return
     el.style.display = "block"
+    el.hidden = false
     el.textContent = t
   }
 
   function hideOk(el) {
     if (!el) return
     el.style.display = "none"
+    el.hidden = true
     el.textContent = ""
   }
 
   function showSlotsErr(t) {
     if (!slotsMsg || !slotsOk) return
     slotsMsg.style.display = "block"
+    slotsMsg.hidden = false
     slotsMsg.textContent = t
     slotsOk.style.display = "none"
+    slotsOk.hidden = true
     slotsOk.textContent = ""
   }
 
   function showSlotsOk(t) {
     if (!slotsMsg || !slotsOk) return
     slotsOk.style.display = "block"
+    slotsOk.hidden = false
     slotsOk.textContent = t
     slotsMsg.style.display = "none"
+    slotsMsg.hidden = true
     slotsMsg.textContent = ""
   }
 
   function clearSlotsMsg() {
     if (!slotsMsg || !slotsOk) return
     slotsMsg.style.display = "none"
+    slotsMsg.hidden = true
     slotsMsg.textContent = ""
     slotsOk.style.display = "none"
+    slotsOk.hidden = true
     slotsOk.textContent = ""
+  }
+
+  function showSyncRunErr(t) {
+    if (!syncRunMsg || !syncRunOk) return
+    syncRunMsg.style.display = "block"
+    syncRunMsg.hidden = false
+    syncRunMsg.textContent = t
+    syncRunOk.style.display = "none"
+    syncRunOk.hidden = true
+    syncRunOk.textContent = ""
+  }
+
+  function showSyncRunOk(t) {
+    if (!syncRunMsg || !syncRunOk) return
+    syncRunOk.style.display = "block"
+    syncRunOk.hidden = false
+    syncRunOk.textContent = t
+    syncRunMsg.style.display = "none"
+    syncRunMsg.hidden = true
+    syncRunMsg.textContent = ""
+  }
+
+  function clearSyncRunMsg() {
+    if (!syncRunMsg || !syncRunOk) return
+    syncRunMsg.style.display = "none"
+    syncRunMsg.hidden = true
+    syncRunMsg.textContent = ""
+    syncRunOk.style.display = "none"
+    syncRunOk.hidden = true
+    syncRunOk.textContent = ""
   }
 
   function escapeHtml(s) {
@@ -212,6 +271,133 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
+  // ==========================================================
+  // SYNC HEALTH (Outlook) — banner vert/orange/rouge
+  // ==========================================================
+  function hideSyncHealth() {
+    if (!syncHealthBanner) return
+    syncHealthBanner.style.display = "none"
+    syncHealthBanner.hidden = true
+    syncHealthBanner.textContent = ""
+    syncHealthBanner.className = "warn"
+  }
+
+  function formatAge(ms) {
+    const m = Math.floor(ms / 60000)
+    if (m < 1) return "à l’instant"
+    if (m < 60) return `il y a ${m} min`
+    const h = Math.floor(m / 60)
+    if (h < 24) return `il y a ${h} h`
+    const d = Math.floor(h / 24)
+    return `il y a ${d} j`
+  }
+
+  function showSyncHealth(kind, text) {
+    if (!syncHealthBanner) return
+    syncHealthBanner.className = kind === "ok" ? "ok" : kind === "warn" ? "warn" : "alert"
+    syncHealthBanner.style.display = "block"
+    syncHealthBanner.hidden = false
+    syncHealthBanner.textContent = text
+  }
+
+  async function refreshSyncHealthOnce() {
+    if (!isAdmin) return
+
+    try {
+      const snap = await syncHealthCol.doc("outlook").get()
+      if (!snap.exists) {
+        showSyncHealth("warn", "⚠️ Outlook sync : aucun état trouvé (syncHealth/outlook absent).")
+        return
+      }
+
+      const d = snap.data() || {}
+      const st = String(d.status || "unknown").toLowerCase()
+      const updatedAt = d.updatedAt?.toDate ? d.updatedAt.toDate() : null
+
+      const ageTxt = updatedAt ? formatAge(Date.now() - updatedAt.getTime()) : "date inconnue"
+      const whenTxt = updatedAt ? updatedAt.toLocaleString("fr-BE") : "—"
+
+      if (st === "ok") {
+        showSyncHealth("ok", `✅ Outlook sync OK — Dernière mise à jour: ${whenTxt} (${ageTxt})`)
+        return
+      }
+
+      if (st === "aborted") {
+        const reason = String(d.reason || "aborted")
+        showSyncHealth("warn", `⚠️ Outlook sync ABORTÉ (${reason}) — Dernière mise à jour: ${whenTxt} (${ageTxt})`)
+        return
+      }
+
+      if (st === "failed") {
+        const msg = String(d.message || "Erreur")
+        showSyncHealth("alert", `❌ Outlook sync ÉCHEC — ${msg} — Dernière mise à jour: ${whenTxt} (${ageTxt})`)
+        return
+      }
+
+      showSyncHealth("warn", `⚠️ Outlook sync statut: ${st} — Dernière mise à jour: ${whenTxt} (${ageTxt})`)
+    } catch (e) {
+      console.warn("refreshSyncHealthOnce error:", e)
+      showSyncHealth("warn", "⚠️ Impossible de lire syncHealth/outlook (rules / réseau).")
+    }
+  }
+
+  function bindSyncHealthRealtime() {
+    if (!isAdmin) return
+    if (_unsubSyncHealth) {
+      try { _unsubSyncHealth() } catch {}
+      _unsubSyncHealth = null
+    }
+
+    _unsubSyncHealth = syncHealthCol.doc("outlook").onSnapshot(
+      (snap) => {
+        if (!snap.exists) {
+          showSyncHealth("warn", "⚠️ Outlook sync : aucun état trouvé (syncHealth/outlook absent).")
+          return
+        }
+
+        const d = snap.data() || {}
+        const st = String(d.status || "unknown").toLowerCase()
+        const updatedAt = d.updatedAt?.toDate ? d.updatedAt.toDate() : null
+
+        const ageTxt = updatedAt ? formatAge(Date.now() - updatedAt.getTime()) : "date inconnue"
+        const whenTxt = updatedAt ? updatedAt.toLocaleString("fr-BE") : "—"
+
+        if (st === "ok") {
+          showSyncHealth("ok", `✅ Outlook sync OK — Dernière mise à jour: ${whenTxt} (${ageTxt})`)
+          return
+        }
+
+        if (st === "aborted") {
+          const reason = String(d.reason || "aborted")
+          showSyncHealth("warn", `⚠️ Outlook sync ABORTÉ (${reason}) — Dernière mise à jour: ${whenTxt} (${ageTxt})`)
+          return
+        }
+
+        if (st === "failed") {
+          const msg = String(d.message || "Erreur")
+          showSyncHealth("alert", `❌ Outlook sync ÉCHEC — ${msg} — Dernière mise à jour: ${whenTxt} (${ageTxt})`)
+          return
+        }
+
+        showSyncHealth("warn", `⚠️ Outlook sync statut: ${st} — Dernière mise à jour: ${whenTxt} (${ageTxt})`)
+      },
+      (err) => {
+        console.warn("syncHealth onSnapshot error:", err)
+        showSyncHealth("warn", "⚠️ Impossible de suivre syncHealth/outlook (rules / réseau).")
+      }
+    )
+  }
+
+  function unbindSyncHealthRealtime() {
+    if (_unsubSyncHealth) {
+      try { _unsubSyncHealth() } catch {}
+      _unsubSyncHealth = null
+    }
+  }
+
+  // ==========================================================
+  // Verrouillage VALIDATED dans freeSlots (prioritaire)
+  // ==========================================================
   async function markFreeSlotAsValidated(appt) {
     const start = appt.start?.toDate ? appt.start.toDate() : null
     const end = appt.end?.toDate ? appt.end.toDate() : null
@@ -302,11 +488,9 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (newStatus === "validated") await markFreeSlotAsValidated(appt)
       if (releaseOnChange) await releaseSlotForAppointment(appt)
 
-      if (newStatus === "validated") {
-        showOk(apptOk, "Rendez-vous validé ✅ (slot verrouillé: validated)")
-      } else if (newStatus === "refused") {
-        showOk(apptOk, "Rendez-vous refusé ✅ — créneau libéré (si pas Outlook/validated)")
-      } else {
+      if (newStatus === "validated") showOk(apptOk, "Rendez-vous validé ✅ (slot verrouillé: validated)")
+      else if (newStatus === "refused") showOk(apptOk, "Rendez-vous refusé ✅ — créneau libéré (si pas Outlook/validated)")
+      else {
         showOk(
           apptOk,
           isLate
@@ -317,6 +501,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       await refreshAppointments()
       await refreshPlanningWeek()
+      await refreshSyncHealthOnce()
     } catch (e) {
       console.error(e)
       showErr(apptMsg, "Impossible d’appliquer l’action (droits, réseau, ou rules).")
@@ -333,9 +518,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       return ta - tb
     })
 
-    if (filterStatus && filterStatus !== "all") {
-      return items.filter((x) => (x.status || "pending") === filterStatus)
-    }
+    if (filterStatus && filterStatus !== "all") return items.filter((x) => (x.status || "pending") === filterStatus)
     return items
   }
 
@@ -349,7 +532,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const search = (document.getElementById("search")?.value || "").trim().toLowerCase()
 
     apptList.innerHTML = `<div class="muted">Chargement…</div>`
-    apptEmpty.hidden = true
+    if (apptEmpty) apptEmpty.hidden = true
 
     try {
       let items = await loadAppointments(filterStatus)
@@ -358,36 +541,32 @@ document.addEventListener("DOMContentLoaded", async () => {
         items = items.filter((a) => {
           const note = String(a.note || "").toLowerCase()
           const email = String(a.email || "").toLowerCase()
-          const adr = String(a.addressControl || "").toLowerCase()
-          return note.includes(search) || email.includes(search) || adr.includes(search)
+          return note.includes(search) || email.includes(search)
         })
       }
 
       if (!items.length) {
         apptList.innerHTML = ""
-        apptEmpty.hidden = false
+        if (apptEmpty) apptEmpty.hidden = false
         return
       }
 
-      apptList.innerHTML = items
-        .map((a) => {
-          const st = statusBadge(a.status)
-          const when = fmtDate(a.start)
-          const uid = escapeHtml(a.uid || "")
-          const note = escapeHtml(a.note || "")
-          const adr = escapeHtml(a.addressControl || "")
+      apptList.innerHTML = items.map((a) => {
+        const st = statusBadge(a.status)
+        const when = fmtDate(a.start)
+        const uid = escapeHtml(a.uid || "")
+        const note = escapeHtml(a.note || "")
 
-          const isCancelled = String(a.status || "").toLowerCase() === "cancelled"
-          const late = a.lateCancel === true
-          const cancelledAt = a.cancelledAt ? fmtDate(a.cancelledAt) : ""
-          const cancelNote = escapeHtml(a.cancelNote || "")
+        const isCancelled = String(a.status || "").toLowerCase() === "cancelled"
+        const late = a.lateCancel === true
+        const cancelledAt = a.cancelledAt ? fmtDate(a.cancelledAt) : ""
+        const cancelNote = escapeHtml(a.cancelNote || "")
 
-          return `
+        return `
           <div class="item" data-id="${a.id}">
             <div class="top">
               <div>
-                <div class="strongLine">${when}</div>
-                ${adr ? `<div class="muted">${adr}</div>` : ``}
+                <div style="font-weight:900">${when}</div>
                 <div class="muted">${note ? note : "<span class='tiny'>(pas de note)</span>"}</div>
                 <div class="tiny">uid: ${uid}</div>
 
@@ -396,32 +575,27 @@ document.addEventListener("DOMContentLoaded", async () => {
                     ? `
                   <div class="hr"></div>
                   <div class="tiny"><b>Annulation :</b> ${cancelledAt ? cancelledAt : "—"}</div>
-                  ${
-                    late
-                      ? `<div class="tiny lateCancel">⚠️ Annulation tardive &lt;48h</div>`
-                      : ``
-                  }
+                  ${late ? `<div class="tiny" style="color:#b45309;font-weight:900">⚠️ Annulation tardive &lt;48h</div>` : ``}
                   ${cancelNote ? `<div class="tiny"><b>Note :</b> ${cancelNote}</div>` : ``}
                 `
                     : ``
                 }
               </div>
 
-              <div class="topRight">
+              <div style="display:flex; flex-direction:column; align-items:flex-end; gap:6px">
                 <span class="badge ${st.cls}">${st.txt}</span>
                 ${late ? `<span class="badge late">⚠️ &lt;48h</span>` : ``}
               </div>
             </div>
 
-            <div class="row rowBtns">
+            <div class="row" style="margin-top:10px">
               <button class="btn good" data-action="validate" ${isCancelled ? "disabled" : ""}>Valider</button>
               <button class="btn bad" data-action="refuse" ${isCancelled ? "disabled" : ""}>Refuser</button>
               <button class="btn warn" data-action="cancel" ${isCancelled ? "disabled" : ""}>Annuler</button>
             </div>
           </div>
         `
-        })
-        .join("")
+      }).join("")
 
       const byId = new Map(items.map((x) => [x.id, x]))
 
@@ -500,20 +674,19 @@ document.addEventListener("DOMContentLoaded", async () => {
         return
       }
 
-      modifList.innerHTML = items
-        .map((m) => {
-          const when = fmtDate(m.appointmentStart)
-          const adr = escapeHtml(m.appointmentAddress || "")
-          const msg = escapeHtml(m.message || "")
-          const uid = escapeHtml(m.uid || "")
-          const apptId = escapeHtml(m.appointmentId || "")
-          const status = escapeHtml(m.status || "new")
+      modifList.innerHTML = items.map((m) => {
+        const when = fmtDate(m.appointmentStart)
+        const adr = escapeHtml(m.appointmentAddress || "")
+        const msg = escapeHtml(m.message || "")
+        const uid = escapeHtml(m.uid || "")
+        const apptId = escapeHtml(m.appointmentId || "")
+        const status = escapeHtml(m.status || "new")
 
-          return `
+        return `
           <div class="item" data-id="${m.id}">
             <div class="top">
               <div>
-                <div class="strongLine">RDV: ${when}</div>
+                <div style="font-weight:900">RDV: ${when}</div>
                 <div class="muted">${adr}</div>
                 <div class="tiny">uid: ${uid}</div>
                 <div class="tiny">appointmentId: ${apptId}</div>
@@ -523,16 +696,15 @@ document.addEventListener("DOMContentLoaded", async () => {
 
             <div class="hr"></div>
 
-            <div class="prewrap">${msg}</div>
+            <div style="white-space:pre-wrap;font-size:13px">${msg}</div>
 
-            <div class="row rowBtns">
+            <div class="row" style="margin-top:10px">
               <button class="btn primary" data-action="done">Marquer “traité”</button>
               <button class="btn" data-action="delete">Supprimer</button>
             </div>
           </div>
         `
-        })
-        .join("")
+      }).join("")
 
       modifList.querySelectorAll("[data-action]").forEach((btn) => {
         btn.addEventListener("click", async () => {
@@ -573,6 +745,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
+  // ====== freeSlots generation (SAFE) ======
   function buildFreeSlots(weeks = WEEKS) {
     const res = []
     const now = new Date()
@@ -587,7 +760,6 @@ document.addEventListener("DOMContentLoaded", async () => {
         const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0, 0)
         start.setMinutes(mins)
         const end = addMinutes(start, SLOT_MINUTES)
-
         const id = freeSlotIdFromDate(start)
 
         res.push({
@@ -610,7 +782,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     const toTs = firebase.firestore.Timestamp.fromDate(toDate)
 
     const snap = await freeSlotsCol.where("start", ">=", fromTs).where("start", "<", toTs).get()
-
     const map = new Map()
     snap.forEach((d) => map.set(d.id, d.data() || {}))
     return map
@@ -626,7 +797,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       if (status === "blocked" && (reason === BLOCK_REASON.OUTLOOK || reason === BLOCK_REASON.VALIDATED)) return false
       if (status === "blocked") return false
-
       return true
     })
 
@@ -688,10 +858,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     const { written, skipped } = await commitBatchesSafe(docs, existing)
     showSlotsOk(`Génération OK ✅ ${written} écrits / ${skipped} ignorés (déjà bloqués outlook/validated).`)
     await refreshPlanningWeek()
+    await refreshSyncHealthOnce()
   }
 
   if (btnGenPreview) btnGenPreview.addEventListener("click", () => generateFreeSlots(WEEKS, true))
-  if (btnGenFreeSlots)
+  if (btnGenFreeSlots) {
     btnGenFreeSlots.addEventListener("click", async () => {
       if (!confirm(`Générer les freeSlots sur ${WEEKS} semaines (90 min) ?\n⚠️ Ne remplacera pas les slots bloqués (outlook/validated).`)) return
       try {
@@ -701,7 +872,9 @@ document.addEventListener("DOMContentLoaded", async () => {
         showSlotsErr("Erreur pendant la génération (droits/réseau).")
       }
     })
+  }
 
+  // ====== PLANNING SEMAINE ======
   function mondayOfWeek(d) {
     const x = new Date(d.getFullYear(), d.getMonth(), d.getDate())
     const day = x.getDay()
@@ -728,6 +901,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       return "blocked"
     }
     if (status === "pending") return "pending"
+    if (status === "validated") return "validated"
     return "free"
   }
 
@@ -747,7 +921,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     planningGrid.innerHTML = `<div class="muted">Chargement planning…</div>`
 
-    const map = new Map()
+    let map = new Map()
     try {
       const snap = await freeSlotsCol.where("start", ">=", fromTs).where("start", "<", toTs).get()
       snap.forEach((doc) => map.set(doc.id, doc.data() || {}))
@@ -774,7 +948,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     cols.forEach((day, i) => {
       const dd = pad2(day.getDate())
       const mm = pad2(day.getMonth() + 1)
-      html += `<div class="slot slotHead">${days[i]} ${dd}/${mm}</div>`
+      html += `<div class="slot" style="justify-content:center;background:#f8fafc">${days[i]} ${dd}/${mm}</div>`
     })
 
     timeSlots.forEach((mins) => {
@@ -787,7 +961,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         const d = map.get(id)
         if (!d) {
-          html += `<div class="slot free slotEmpty">—</div>`
+          html += `<div class="slot free" style="opacity:.55">—</div>`
           return
         }
 
@@ -811,10 +985,81 @@ document.addEventListener("DOMContentLoaded", async () => {
     planningGrid.innerHTML = html
   }
 
+  // ==========================================================
+  // ✅ Force Outlook Sync (via Cloud Function) — zéro token client
+  // ==========================================================
+  const GITHUB_REPO_OWNER = "TON_OWNER"
+  const GITHUB_REPO_NAME = "TON_REPO"
+  const GITHUB_WORKFLOW_FILE = "outlook-sync.yml"
+  const GITHUB_BRANCH = "main"
+
+  if (btnOpenActions) {
+    btnOpenActions.href = `https://github.com/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}/actions/workflows/${GITHUB_WORKFLOW_FILE}`
+  }
+
+  async function triggerOutlookSync() {
+    clearSyncRunMsg()
+
+    if (!isAdmin) {
+      showSyncRunErr("Connecte-toi en admin d’abord.")
+      return
+    }
+
+    if (!btnForceOutlookSync) return
+    const old = btnForceOutlookSync.textContent
+    btnForceOutlookSync.disabled = true
+    btnForceOutlookSync.textContent = "Lancement…"
+
+    try {
+      const user = auth.currentUser
+      if (!user) {
+        showSyncRunErr("Session expirée. Reconnecte-toi.")
+        return
+      }
+
+      const idToken = await user.getIdToken()
+
+      const res = await fetch("/api/trigger-outlook-sync", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          ref: GITHUB_BRANCH,
+          reason: "manual-admin",
+        }),
+      })
+
+      const data = await res.json().catch(() => ({}))
+
+      if (!res.ok) {
+        const msg = data?.error || `Erreur HTTP ${res.status}`
+        showSyncRunErr(`Impossible de lancer la sync: ${msg}`)
+        return
+      }
+
+      showSyncRunOk("✅ Sync déclenchée sur GitHub Actions (workflow_dispatch).")
+      await refreshSyncHealthOnce()
+    } catch (e) {
+      console.error(e)
+      showSyncRunErr("Erreur réseau lors du déclenchement.")
+    } finally {
+      btnForceOutlookSync.disabled = false
+      btnForceOutlookSync.textContent = old || "Lancer la sync maintenant"
+    }
+  }
+
+  if (btnForceOutlookSync) btnForceOutlookSync.addEventListener("click", triggerOutlookSync)
+
+  // ========= UI EVENTS =========
   document.getElementById("btnRefresh")?.addEventListener("click", async () => {
     await refreshAppointments()
+    await refreshModifs()
     await refreshPlanningWeek()
+    await refreshSyncHealthOnce()
   })
+
   document.getElementById("statusFilter")?.addEventListener("change", refreshAppointments)
 
   let _debounce = null
@@ -826,8 +1071,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("btnRefreshModifs")?.addEventListener("click", refreshModifs)
   document.getElementById("modifFilter")?.addEventListener("change", refreshModifs)
 
+  // ========= LOGIN MODAL =========
   function openLogin() {
     loginErr.hidden = true
+    loginErr.style.display = "none"
     loginErr.textContent = ""
     overlay.style.display = "flex"
     document.getElementById("loginEmail")?.focus()
@@ -851,6 +1098,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   document.getElementById("doLogin")?.addEventListener("click", async () => {
     loginErr.hidden = true
+    loginErr.style.display = "none"
     loginErr.textContent = ""
 
     const email = (document.getElementById("loginEmail")?.value || "").trim().toLowerCase()
@@ -858,6 +1106,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     if (!email || !pass) {
       loginErr.hidden = false
+      loginErr.style.display = "block"
       loginErr.textContent = "Veuillez saisir l’e-mail et le mot de passe."
       return
     }
@@ -868,6 +1117,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     } catch (e) {
       console.error(e)
       loginErr.hidden = false
+      loginErr.style.display = "block"
       loginErr.textContent = "Connexion impossible. Vérifiez vos identifiants."
     }
   })
@@ -876,14 +1126,18 @@ document.addEventListener("DOMContentLoaded", async () => {
     await auth.signOut()
   })
 
+  // ========= PROTECTION =========
   auth.onAuthStateChanged(async (user) => {
     hideErr(apptMsg)
     hideOk(apptOk)
     hideErr(modifMsg)
     hideOk(modifOk)
     clearSlotsMsg()
+    clearSyncRunMsg()
 
     isAdmin = false
+    unbindSyncHealthRealtime()
+    hideSyncHealth()
 
     if (!user) {
       setStatus(false)
@@ -904,14 +1158,16 @@ document.addEventListener("DOMContentLoaded", async () => {
       setStatus(false)
       apptList.innerHTML = `<div class="muted"><b>Accès refusé</b> : ce compte n’est pas administrateur.<br/>Retour à l’accueil…</div>`
       if (modifList) modifList.innerHTML = `<div class="muted"><b>Accès refusé</b> : ce compte n’est pas administrateur.<br/>Retour à l’accueil…</div>`
-      setTimeout(() => {
-        window.location.href = "/"
-      }, 2000)
+      setTimeout(() => { window.location.href = "/" }, 2000)
       return
     }
 
     isAdmin = true
     setStatus(true)
+
+    await refreshSyncHealthOnce()
+    bindSyncHealthRealtime()
+
     await refreshAppointments()
     await refreshModifs()
     await refreshPlanningWeek()
