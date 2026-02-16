@@ -1,16 +1,12 @@
 // =======================================================
-// Goffin Booking — index.v3.js
-// Option A (rules strictes) :
-// - source unique freeSlots
-// - le client ne modifie QUE freeSlots.status + freeSlots.updatedAt
-// - PAS de busySlots
-// - badge "Outlook" sur blockedReason=outlook (lecture seulement)
-//
-// ETAPE 1 (pro) :
-// - Profil client = Société + BCE + Tel + Adresse siège (HQ)
-// - Adresse chantier = obligatoire lors de la demande de RDV (appointment.siteAddress)
+// Goffin Booking — index.v3.js (STEP 2 PRO)
+// - Profil client: société + BCE + tel + adresse siège (obligatoire)
+// - Adresse chantier UNIQUEMENT lors de la demande de RDV
+// - Formulaire intelligent RDV (multi-techniques, région, pression, nb appareils, kW, chaufferie, photos/lien)
+// - Fix rules: le client ne modifie sur freeSlots QUE status + updatedAt (PAS blockedReason)
+// - Badge <48h clair
 // =======================================================
-const INDEX_VERSION = "v3-2026-02-15-step1-A-strict-freeSlots";
+const INDEX_VERSION = "v3-2026-02-15-step2-pro";
 console.log("index.v3.js chargé ✅", INDEX_VERSION);
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -27,12 +23,13 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // ---------- CONFIG ----------
   const CFG = {
-    daysToShow: 5,                 // Lun -> Ven
-    startMinutes: 9 * 60 + 30,     // 09:30
-    endMinutes: 17 * 60 + 30,      // 17:30
-    slotMinutes: 90,               // 60 + 30 trajet
+    daysToShow: 5, // Lun -> Ven
+    startMinutes: 9 * 60 + 30, // 09:30
+    endMinutes: 17 * 60 + 30, // 17:30
+    slotMinutes: 90, // 60 + 30 trajet
     appointmentMinutes: 60,
     weeksToShowLabel: "Semaine",
+    minHoursBefore: 48,
   };
 
   // ---------- Helpers ----------
@@ -96,7 +93,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   function startOfWeekMonday(d) {
     const x = startOfDay(d);
     const day = x.getDay(); // 0=Sun..6=Sat
-    const diff = (day === 0 ? -6 : 1 - day);
+    const diff = day === 0 ? -6 : 1 - day;
     x.setDate(x.getDate() + diff);
     return x;
   }
@@ -139,11 +136,15 @@ document.addEventListener("DOMContentLoaded", async () => {
     return msg.includes("ERR_BLOCKED_BY_CLIENT") || msg.includes("blocked by client");
   }
 
+  function min48Date() {
+    return new Date(Date.now() + CFG.minHoursBefore * 60 * 60 * 1000);
+  }
+
   // ---------- UI: Auth ----------
   function showPanel(panelId) {
     ["panelLogin", "panelSignup"].forEach((id) => {
       const el = document.getElementById(id);
-      if (el) el.style.display = (id === panelId) ? "block" : "none";
+      if (el) el.style.display = id === panelId ? "block" : "none";
     });
     hideBanner();
   }
@@ -196,7 +197,6 @@ document.addEventListener("DOMContentLoaded", async () => {
         <input id="signupPass" type="password" placeholder="minimum 6 caractères" autocomplete="new-password"/>
 
         <button id="btnSignup" class="btn alt" style="margin-top:12px" type="button">Créer mon compte</button>
-        <p class="help">Astuce test: utilisez test01@check.be + mot de passe (≥ 6 caractères).</p>
       </div>
 
       <div id="uiBanner" class="alert" style="display:none"></div>
@@ -328,11 +328,13 @@ document.addEventListener("DOMContentLoaded", async () => {
       </div>
       <div class="ok" style="display:block">Compte administrateur détecté ✅ Redirection vers le panneau admin…</div>
     `;
-    setTimeout(() => { window.location.href = "/admin"; }, 250);
+    setTimeout(() => {
+      window.location.href = "/admin";
+    }, 250);
     return true;
   }
 
-  // ---------- UI: Profile ----------
+  // ---------- UI: Profile (SANS adresse chantier) ----------
   function renderProfileForm(userEmail) {
     right.innerHTML = `
       <div class="stepWrap">
@@ -343,16 +345,16 @@ document.addEventListener("DOMContentLoaded", async () => {
       <p class="muted">Complétez vos informations société (1 minute).</p>
 
       <label class="label">Société</label>
-      <input id="p_company" placeholder="Nom de la société"/>
+      <input id="p_company" placeholder="Nom de la société" />
 
       <div class="row">
         <div>
           <label class="label">N° d’entreprise (BCE)</label>
-          <input id="p_vat" placeholder="ex: BE0123456789"/>
+          <input id="p_vat" placeholder="ex: BE0123456789" />
         </div>
         <div>
           <label class="label">Téléphone</label>
-          <input id="p_phone" placeholder="ex: +32 ..."/>
+          <input id="p_phone" placeholder="ex: +32 ..." />
         </div>
       </div>
 
@@ -376,7 +378,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     return errors;
   }
 
-  // ---------- UI: Booking ----------
+  // ---------- UI: Booking shell + Formulaire intelligent ----------
   function renderBookingShell(userEmail) {
     right.innerHTML = `
       <div class="stepWrap">
@@ -404,6 +406,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       <div class="calLegend">
         <span class="dotKey"><span class="kdot kfree"></span> libre</span>
         <span class="dotKey"><span class="kdot kblocked"></span> indisponible</span>
+        <span class="dotKey"><span class="kdot ksoon"></span> &lt;48h</span>
         <span class="dotKey"><span class="kdot kselected"></span> sélection</span>
       </div>
 
@@ -411,11 +414,83 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       <div class="divider"></div>
 
+      <h3 style="margin:0 0 8px">Informations de la demande</h3>
+
       <label class="label">Adresse du chantier (obligatoire)</label>
-      <textarea id="apptSiteAddress" placeholder="Rue, n°, code postal, ville"></textarea>
+      <textarea id="apptAddress" placeholder="Rue, n°, code postal, ville"></textarea>
+
+      <div class="row">
+        <div>
+          <label class="label">Région</label>
+          <select id="apptRegion">
+            <option value="">—</option>
+            <option value="Bruxelles">Bruxelles</option>
+            <option value="Wallonie">Wallonie</option>
+            <option value="Flandre">Flandre</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="label">Chaufferie ?</label>
+          <select id="apptChaufferie">
+            <option value="">—</option>
+            <option value="oui">Oui</option>
+            <option value="non">Non</option>
+          </select>
+        </div>
+      </div>
+
+      <label class="label">Type(s) de contrôle (au moins 1)</label>
+      <div class="chipGrid" id="apptTechniques">
+        <label class="chip"><input type="checkbox" value="Conformité gaz" /> Conformité gaz</label>
+        <label class="chip"><input type="checkbox" value="Réception chaudière" /> Réception chaudière</label>
+        <label class="chip"><input type="checkbox" value="Étanchéité (gaz)" /> Étanchéité (gaz)</label>
+        <label class="chip"><input type="checkbox" value="Combustion / analyse" /> Combustion / analyse</label>
+        <label class="chip"><input type="checkbox" value="Autre" /> Autre</label>
+      </div>
+
+      <label class="label">Autre (si coché)</label>
+      <input id="apptOther" placeholder="Ex: contrôle spécifique, réception après travaux, ..." />
+
+      <div class="row">
+        <div>
+          <label class="label">Pression (optionnel)</label>
+          <select id="apptPressure">
+            <option value="">—</option>
+            <option value="21 mbar">21 mbar</option>
+            <option value="100 mbar">100 mbar</option>
+            <option value=">100 mbar">&gt; 100 mbar</option>
+          </select>
+          <div class="tiny">Info utile, non bloquant.</div>
+        </div>
+
+        <div>
+          <label class="label">Nombre d’appareils (optionnel)</label>
+          <input id="apptAppliances" type="number" min="0" step="1" placeholder="ex: 2" />
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label class="label">Puissance totale estimée (kW) (optionnel)</label>
+          <input id="apptPowerKw" type="number" min="0" step="0.1" placeholder="ex: 35" />
+        </div>
+        <div>
+          <label class="label">Photos disponibles ?</label>
+          <select id="apptPhotos">
+            <option value="">—</option>
+            <option value="oui">Oui</option>
+            <option value="non">Non</option>
+          </select>
+          <div class="tiny">Pour rester 100% Spark, on met un lien si besoin.</div>
+        </div>
+      </div>
+
+      <label class="label">Lien photos (OneDrive / Google Drive) (optionnel)</label>
+      <input id="apptPhotosLink" placeholder="https://..." />
 
       <label class="label">Note (optionnel)</label>
-      <textarea id="apptNote" placeholder="Détails utiles (type de contrôle, accès, etc.)"></textarea>
+      <textarea id="apptNote" placeholder="Détails utiles (accès, contact sur place, contraintes, etc.)"></textarea>
 
       <button id="btnBook" class="btn primary" type="button" disabled>Envoyer la demande (réservation)</button>
 
@@ -427,6 +502,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     `;
   }
 
+  // ---------- Calendar rendering ----------
   function renderCalendarGrid(days, timeRows, slotStateByKey) {
     const grid = document.getElementById("calGrid");
     if (!grid) return;
@@ -438,31 +514,36 @@ document.addEventListener("DOMContentLoaded", async () => {
       </div>
     `;
 
-    const rowsHtml = timeRows.map((mins) => {
-      const timeCell = `<div class="calCell timeCell">${escapeHtml(mmToHHMM(mins))}</div>`;
-      const dayCells = days.map((d) => {
-        const slotStart = new Date(d);
-        slotStart.setHours(0, 0, 0, 0);
-        slotStart.setMinutes(mins);
+    const rowsHtml = timeRows
+      .map((mins) => {
+        const timeCell = `<div class="calCell timeCell">${escapeHtml(mmToHHMM(mins))}</div>`;
+        const dayCells = days
+          .map((d) => {
+            const slotStart = new Date(d);
+            slotStart.setHours(0, 0, 0, 0);
+            slotStart.setMinutes(mins);
 
-        const key = `${dateKey(slotStart)}_${String(slotStart.getHours()).padStart(2, "0")}${String(slotStart.getMinutes()).padStart(2, "0")}`;
-        const st = slotStateByKey.get(key) || { status: "blocked", disabled: true, title: "Indisponible" };
+            const key = `${dateKey(slotStart)}_${String(slotStart.getHours()).padStart(2, "0")}${String(slotStart.getMinutes()).padStart(2, "0")}`;
+            const st = slotStateByKey.get(key) || { status: "blocked", disabled: true, title: "Indisponible" };
 
-        const classes = ["calCell", "slot"];
-        if (st.status === "free") classes.push("free");
-        if (st.status === "blocked") classes.push("blocked");
-        if (st.status === "selected") classes.push("selected");
-        if (st.disabled) classes.push("disabled");
+            const classes = ["calCell", "slot"];
+            if (st.status === "free") classes.push("free");
+            if (st.status === "blocked") classes.push("blocked");
+            if (st.status === "soon") classes.push("soon");
+            if (st.status === "selected") classes.push("selected");
+            if (st.disabled) classes.push("disabled");
 
-        return `
-          <div class="${classes.join(" ")}" data-slotkey="${escapeHtml(key)}" title="${escapeHtml(st.title || "")}">
-            ${st.label || ""}
-          </div>
-        `;
-      }).join("");
+            return `
+              <div class="${classes.join(" ")}" data-slotkey="${escapeHtml(key)}" title="${escapeHtml(st.title || "")}">
+                ${st.label || ""}
+              </div>
+            `;
+          })
+          .join("");
 
-      return `<div class="calRow">${timeCell}${dayCells}</div>`;
-    }).join("");
+        return `<div class="calRow">${timeCell}${dayCells}</div>`;
+      })
+      .join("");
 
     grid.innerHTML = headRow + rowsHtml;
   }
@@ -477,10 +558,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const tsStart = firebase.firestore.Timestamp.fromDate(weekStart);
     const tsEnd = firebase.firestore.Timestamp.fromDate(weekEnd);
 
-    const snap = await db.collection("freeSlots")
-      .where("start", ">=", tsStart)
-      .where("start", "<", tsEnd)
-      .get();
+    const snap = await db.collection("freeSlots").where("start", ">=", tsStart).where("start", "<", tsEnd).get();
 
     const map = new Map();
     snap.forEach((doc) => {
@@ -494,12 +572,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   async function fetchMyAppointments(db, uid) {
-    const snap = await db.collection("appointments")
-      .where("uid", "==", uid)
-      .orderBy("start", "desc")
-      .limit(10)
-      .get();
-
+    const snap = await db.collection("appointments").where("uid", "==", uid).orderBy("start", "desc").limit(10).get();
     const items = [];
     snap.forEach((doc) => items.push({ id: doc.id, ...doc.data() }));
     return items;
@@ -514,49 +587,76 @@ document.addEventListener("DOMContentLoaded", async () => {
       return;
     }
 
-    el.innerHTML = list.map((a) => {
-      const st = a.status || "pending";
-      const badgeClass =
-        st === "pending" ? "pending" :
-        st === "validated" ? "validated" :
-        st === "refused" ? "refused" :
-        st === "cancelled" ? "cancelled" : "";
+    el.innerHTML = list
+      .map((a) => {
+        const st = a.status || "pending";
+        const badgeClass =
+          st === "pending"
+            ? "pending"
+            : st === "validated"
+              ? "validated"
+              : st === "refused"
+                ? "refused"
+                : st === "cancelled"
+                  ? "cancelled"
+                  : "";
 
-      const start = a.start?.toDate?.() ? a.start.toDate() : null;
-      const when = start
-        ? `${dayLabel(start)} • ${String(start.getHours()).padStart(2, "0")}:${String(start.getMinutes()).padStart(2, "0")}`
-        : "(date inconnue)";
+        const start = a.start?.toDate?.() ? a.start.toDate() : null;
+        const when = start
+          ? `${dayLabel(start)} • ${String(start.getHours()).padStart(2, "0")}:${String(start.getMinutes()).padStart(2, "0")}`
+          : "(date inconnue)";
 
-      const site = a.siteAddress
-        ? `<div class="tiny" style="margin-top:6px"><b>Chantier :</b> ${escapeHtml(a.siteAddress)}</div>`
-        : "";
+        const adr = a.appointmentAddress ? `<div class="tiny"><b>Adresse:</b> ${escapeHtml(a.appointmentAddress)}</div>` : "";
+        const tech = Array.isArray(a.techniques) && a.techniques.length
+          ? `<div class="tiny"><b>Contrôles:</b> ${escapeHtml(a.techniques.join(" + "))}</div>`
+          : "";
 
-      return `
-        <div class="apptCard">
-          <div class="apptTop">
-            <div>
-              <div style="font-weight:900">${escapeHtml(when)}</div>
-              ${site}
-              <div class="muted" style="margin-top:6px">${escapeHtml(a.note || "")}</div>
+        return `
+          <div class="apptCard">
+            <div class="apptTop">
+              <div>
+                <div style="font-weight:900">${escapeHtml(when)}</div>
+                ${adr}
+                ${tech}
+                <div class="muted" style="margin-top:4px">${escapeHtml(a.note || "")}</div>
+              </div>
+              <div class="badge ${badgeClass}">${escapeHtml(st)}</div>
             </div>
-            <div class="badge ${badgeClass}">${escapeHtml(st)}</div>
           </div>
-        </div>
-      `;
-    }).join("");
+        `;
+      })
+      .join("");
   }
 
-  // ========= IMPORTANT (Option A) =========
-  // Ici on update freeSlots avec UNIQUEMENT:
-  // - status
-  // - updatedAt
-  // (pour matcher tes rules strictes)
-  async function bookSlot(db, user, selected, note) {
-    const siteAddress = (document.getElementById("apptSiteAddress")?.value || "").trim();
-    if (!siteAddress || siteAddress.length < 6) {
-      throw new Error("Veuillez indiquer l’adresse complète du chantier.");
+  function getSelectedTechniques() {
+    const wrap = document.getElementById("apptTechniques");
+    if (!wrap) return [];
+    const boxes = wrap.querySelectorAll("input[type=checkbox]");
+    const arr = [];
+    boxes.forEach((b) => {
+      if (b.checked) arr.push(String(b.value || "").trim());
+    });
+    return arr.filter(Boolean);
+  }
+
+  function validateBookingForm() {
+    const address = (document.getElementById("apptAddress")?.value || "").trim();
+    const techniques = getSelectedTechniques();
+
+    if (!address || address.length < 8) return "Veuillez indiquer l’adresse du chantier.";
+    if (!techniques.length) return "Veuillez sélectionner au moins 1 type de contrôle.";
+
+    // Si "Autre" coché, on exige un petit texte
+    if (techniques.includes("Autre")) {
+      const other = (document.getElementById("apptOther")?.value || "").trim();
+      if (other.length < 3) return "Vous avez coché “Autre” : veuillez préciser.";
     }
 
+    return "";
+  }
+
+  // ✅ IMPORTANT: freeSlots update côté client = ONLY status + updatedAt (rules)
+  async function bookSlot(db, user, selected, payload) {
     const apptRef = db.collection("appointments").doc();
     const lockRef = db.collection("slots").doc();
     const freeRef = db.collection("freeSlots").doc(selected.freeSlotDocId);
@@ -573,7 +673,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         throw new Error("Ce créneau n’est plus disponible.");
       }
 
-      // ✅ Option A: status + updatedAt uniquement
+      // ✅ rules: client ne peut changer QUE status + updatedAt
       tx.update(freeRef, {
         status: "blocked",
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -584,10 +684,21 @@ document.addEventListener("DOMContentLoaded", async () => {
         email: (user.email || "").toLowerCase(),
         start: startTs,
         end: endTs,
-        siteAddress: siteAddress,
         status: "pending",
-        note: note || "",
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+
+        // --- contenu "métier" ---
+        appointmentAddress: payload.appointmentAddress || "",
+        region: payload.region || "",
+        chaufferie: payload.chaufferie || "",
+        techniques: payload.techniques || [],
+        other: payload.other || "",
+        pressure: payload.pressure || "",
+        appliances: payload.appliances ?? null,
+        powerKw: payload.powerKw ?? null,
+        photosAvailable: payload.photosAvailable || "",
+        photosLink: payload.photosLink || "",
+        note: payload.note || "",
       });
 
       tx.set(lockRef, {
@@ -620,7 +731,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   const auth = firebase.auth();
   const db = firebase.firestore();
 
-  try { await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); } catch {}
+  try {
+    await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+  } catch {}
 
   btnLogout.addEventListener("click", async () => {
     await auth.signOut();
@@ -633,8 +746,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   let selectedSlot = null; // { key, startDate, endDate, freeSlotDocId }
   let lastFreeSlotsMap = new Map();
 
-  function makeOutlookLabel() {
-    return `<span class="miniTag outlook">Outlook</span>`;
+  function makeTag(label, cls) {
+    return `<span class="miniTag ${cls}">${escapeHtml(label)}</span>`;
   }
 
   async function refreshCalendarAndAppointments(user) {
@@ -643,7 +756,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     const calSub = document.getElementById("calSub");
     const calTitle = document.getElementById("calTitle");
-    if (calTitle) calTitle.textContent = `Semaine du ${days[0].toLocaleDateString()}`;
+    if (calTitle) calTitle.textContent = `Semaine du ${days[0].toLocaleDateString("fr-BE")}`;
     if (calSub) calSub.textContent = `Créneaux: ${CFG.slotMinutes} min (RDV ${CFG.appointmentMinutes} + trajet)`;
 
     // --- freeSlots only ---
@@ -656,8 +769,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     const slotStateByKey = new Map();
-    const now = new Date();
-    const min48 = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+    const min48 = min48Date();
 
     for (const day of days) {
       for (const mins of timeRows) {
@@ -668,6 +780,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         const key = `${dateKey(start)}_${String(start.getHours()).padStart(2, "0")}${String(start.getMinutes()).padStart(2, "0")}`;
         const freeDoc = lastFreeSlotsMap.get(key);
 
+        // defaults
         let status = "blocked";
         let disabled = true;
         let title = "Indisponible";
@@ -679,7 +792,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           title = "Non généré";
         } else {
           const st = String(freeDoc.status || "blocked").toLowerCase();
-          const br = String(freeDoc.blockedReason || "").toLowerCase(); // lecture seulement
+          const br = String(freeDoc.blockedReason || "").toLowerCase();
 
           if (st === "free") {
             status = "free";
@@ -691,9 +804,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
             if (br === "outlook") {
               title = "Indisponible (Outlook)";
-              label = makeOutlookLabel();
+              label = makeTag("Outlook", "outlook");
             } else if (br === "validated") {
               title = "Indisponible (déjà validé)";
+              label = makeTag("Validé", "validated");
             } else if (br) {
               title = `Indisponible (${br})`;
             } else {
@@ -701,13 +815,12 @@ document.addEventListener("DOMContentLoaded", async () => {
             }
           }
 
-          // règle <48h : même si free => on force indisponible visuellement
+          // règle <48h (prioritaire visuellement)
           if (start < min48) {
+            status = "soon";
             disabled = true;
-            if (status === "free") {
-              status = "blocked";
-              title = "Indisponible (<48h)";
-            }
+            title = "Indisponible (<48h)";
+            label = makeTag("<48h", "soon");
           }
         }
 
@@ -752,11 +865,10 @@ document.addEventListener("DOMContentLoaded", async () => {
         const [yy, mo, dd] = dPart.split("-").map((x) => parseInt(x, 10));
         const hh = parseInt(hm.slice(0, 2), 10);
         const mm = parseInt(hm.slice(2, 4), 10);
-        const start = new Date(yy, (mo - 1), dd, hh, mm, 0, 0);
+        const start = new Date(yy, mo - 1, dd, hh, mm, 0, 0);
 
         // règle <48h
-        const min48now = new Date(Date.now() + 48 * 60 * 60 * 1000);
-        if (start < min48now) {
+        if (start < min48Date()) {
           showBanner("warn", "Ce créneau est à moins de 48h : réservation impossible.");
           return;
         }
@@ -766,7 +878,6 @@ document.addEventListener("DOMContentLoaded", async () => {
         selectedSlot = { key, startDate: start, endDate: end, freeSlotDocId: freeDoc.id };
         const b = document.getElementById("btnBook");
         if (b) b.disabled = false;
-
         await refreshCalendarAndAppointments(user);
       });
     });
@@ -808,22 +919,52 @@ document.addEventListener("DOMContentLoaded", async () => {
   async function bindBookButton(user) {
     document.getElementById("btnBook")?.addEventListener("click", async () => {
       hideBanner();
+
       const btnBook = document.getElementById("btnBook");
       if (!selectedSlot) {
         showBanner("alert", "Veuillez sélectionner un créneau.");
         return;
       }
 
+      const err = validateBookingForm();
+      if (err) {
+        showBanner("alert", err);
+        return;
+      }
+
       try {
         if (btnBook) btnBook.disabled = true;
-        const note = (document.getElementById("apptNote")?.value || "").trim();
 
-        await bookSlot(db, user, selectedSlot, note);
+        const techniques = getSelectedTechniques();
+        const payload = {
+          appointmentAddress: (document.getElementById("apptAddress")?.value || "").trim(),
+          region: (document.getElementById("apptRegion")?.value || "").trim(),
+          chaufferie: (document.getElementById("apptChaufferie")?.value || "").trim(),
+          techniques,
+          other: (document.getElementById("apptOther")?.value || "").trim(),
+          pressure: (document.getElementById("apptPressure")?.value || "").trim(),
+          appliances: (() => {
+            const v = (document.getElementById("apptAppliances")?.value || "").trim();
+            if (!v) return null;
+            const n = parseInt(v, 10);
+            return Number.isFinite(n) ? n : null;
+          })(),
+          powerKw: (() => {
+            const v = (document.getElementById("apptPowerKw")?.value || "").trim();
+            if (!v) return null;
+            const n = parseFloat(v);
+            return Number.isFinite(n) ? n : null;
+          })(),
+          photosAvailable: (document.getElementById("apptPhotos")?.value || "").trim(),
+          photosLink: (document.getElementById("apptPhotosLink")?.value || "").trim(),
+          note: (document.getElementById("apptNote")?.value || "").trim(),
+        };
+
+        await bookSlot(db, user, selectedSlot, payload);
 
         showBanner("ok", "Demande envoyée ✅ (en attente de validation)");
         selectedSlot = null;
         if (btnBook) btnBook.disabled = true;
-
         await refreshCalendarAndAppointments(user);
       } catch (e) {
         console.error(e);
