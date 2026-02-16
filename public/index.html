@@ -5,8 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Assistant de rendez-vous – Goffin</title>
 
+  <meta name="description" content="Demande de rendez-vous Gaz naturel (GN) – réservé aux professionnels.">
+
   <!-- CSS (cache-bust) -->
-  <link rel="stylesheet" href="/index.css?v=2026-02-16-2" />
+  <link rel="stylesheet" href="/index.css?v=2026-02-16-3" />
 
   <!-- Firebase (Compat) -->
   <script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -16,12 +18,8 @@
   <!-- Auto-config Firebase Hosting -->
   <script defer src="/__/firebase/init.js"></script>
 
-  <!-- APP CLIENT (UNE SEULE FOIS) -->
-  <script defer src="/index.v3.js?v=v3-2026-02-16-pro-2"></script>
-
-  <script>
-    console.log("index.html chargé ✅", location.href);
-  </script>
+  <!-- APP CLIENT -->
+  <script defer src="/index.v3.js?v=v3-2026-02-16-pro-3"></script>
 </head>
 
 <body>
@@ -31,12 +29,13 @@
       <h1>Assistant de rendez-vous – Goffin</h1>
       <p>Réservé aux professionnels • Gaz naturel (GN) uniquement</p>
     </div>
+
     <div class="status">
       <span class="pill" id="pillStatus">
         <span class="dot"></span>
         <span id="statusText">Non connecté</span>
       </span>
-      <button class="btnTop secondary" id="btnLogout" style="display:none;">Déconnexion</button>
+      <button class="btnTop secondary" id="btnLogout" hidden>Déconnexion</button>
     </div>
   </div>
 </header>
@@ -65,12 +64,11 @@
         Les créneaux occupés apparaissent uniquement comme <b>indisponibles</b>.
       </div>
 
-      <p class="tiny">Dernière mise à jour : <span>31/01/2026</span></p>
+      <p class="tiny">Dernière mise à jour : <span>16/02/2026</span></p>
     </section>
 
     <section class="card" id="rightPanel"></section>
   </div>
 </main>
-
 </body>
 </html>

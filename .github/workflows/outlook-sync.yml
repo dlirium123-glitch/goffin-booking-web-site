@@ -5,31 +5,35 @@ on:
   schedule:
     - cron: "*/30 * * * *" # toutes les 30 minutes
 
+concurrency:
+  group: outlook-sync
+  cancel-in-progress: true
+
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: 20
+          cache: npm
+          cache-dependency-path: tools/outlook-sync/package-lock.json
 
       - name: Google Auth
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: "${{ secrets.FIREBASE_SERVICE_ACCOUNT }}"
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
 
       - name: Install deps
         working-directory: tools/outlook-sync
-        run: npm install
+        run: npm ci
 
       - name: Run sync
         working-directory: tools/outlook-sync
         env:
-          FIREBASE_PROJECT_ID: "goffin-booking-web"
-          OUTLOOK_ICS_URL: "${{ secrets.OUTLOOK_ICS_URL }}"
+          FIREBASE_PROJECT_ID: goffin-booking-web
+          OUTLOOK_ICS_URL: ${{ secrets.OUTLOOK_ICS_URL }}
           DAYS_FORWARD: "90"
         run: node sync.js

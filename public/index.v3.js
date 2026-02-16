@@ -4,148 +4,143 @@
 // - Le client voit: Libre / Indisponible / Mon RDV (pas Outlook / pas <48h)
 // - IMPORTANT: freeSlots update côté client = status + updatedAt ONLY (rules)
 // =======================================================
-const INDEX_VERSION = "v3-2026-02-16-PRO-step2";
-console.log("index.v3.js chargé ✅", INDEX_VERSION);
+const INDEX_VERSION = "v3-2026-02-16-PRO-step3"
+console.log("index.v3.js chargé ✅", INDEX_VERSION)
 
 document.addEventListener("DOMContentLoaded", async () => {
-  // ---------- DOM refs ----------
-  const right = document.getElementById("rightPanel");
-  const pill = document.getElementById("pillStatus");
-  const statusText = document.getElementById("statusText");
-  const btnLogout = document.getElementById("btnLogout");
+  const right = document.getElementById("rightPanel")
+  const pill = document.getElementById("pillStatus")
+  const statusText = document.getElementById("statusText")
+  const btnLogout = document.getElementById("btnLogout")
 
   if (!right || !pill || !statusText || !btnLogout) {
-    console.error("DOM manquant: rightPanel/pillStatus/statusText/btnLogout");
-    return;
+    console.error("DOM manquant: rightPanel/pillStatus/statusText/btnLogout")
+    return
   }
 
-  // ---------- CONFIG ----------
   const CFG = {
-    daysToShow: 5,                 // Lun -> Ven
-    startMinutes: 9 * 60 + 30,     // 09:30
-    endMinutes: 17 * 60 + 30,      // 17:30
-    slotMinutes: 90,               // 60 + 30 trajet
+    daysToShow: 5,
+    startMinutes: 9 * 60 + 30,
+    endMinutes: 17 * 60 + 30,
+    slotMinutes: 90,
     appointmentMinutes: 60,
     weeksToShowLabel: "Semaine",
     maxAppointmentsToShow: 12,
-  };
+  }
 
-  // ---------- Helpers ----------
   function escapeHtml(s) {
     return String(s ?? "")
       .replaceAll("&", "&amp;")
       .replaceAll("<", "&lt;")
       .replaceAll(">", "&gt;")
       .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
+      .replaceAll("'", "&#039;")
   }
 
   function setStatus(isLogged) {
     if (isLogged) {
-      pill.classList.add("ok");
-      statusText.textContent = "Connecté";
-      btnLogout.style.display = "";
+      pill.classList.add("ok")
+      statusText.textContent = "Connecté"
+      btnLogout.hidden = false
     } else {
-      pill.classList.remove("ok");
-      statusText.textContent = "Non connecté";
-      btnLogout.style.display = "none";
+      pill.classList.remove("ok")
+      statusText.textContent = "Non connecté"
+      btnLogout.hidden = true
     }
   }
 
   function showBanner(type, text) {
-    const el = document.getElementById("uiBanner");
-    if (!el) return;
-    el.className = type === "ok" ? "ok" : type === "warn" ? "warn" : "alert";
-    el.style.display = "block";
-    el.textContent = text;
+    const el = document.getElementById("uiBanner")
+    if (!el) return
+    el.className = type === "ok" ? "ok" : type === "warn" ? "warn" : "alert"
+    el.style.display = "block"
+    el.textContent = text
   }
 
   function hideBanner() {
-    const el = document.getElementById("uiBanner");
-    if (!el) return;
-    el.style.display = "none";
-    el.textContent = "";
+    const el = document.getElementById("uiBanner")
+    if (!el) return
+    el.style.display = "none"
+    el.textContent = ""
   }
 
   async function waitForFirebase(maxMs = 10000) {
-    const t0 = Date.now();
+    const t0 = Date.now()
     while (Date.now() - t0 < maxMs) {
-      if (window.firebase && window.firebase.auth && window.firebase.firestore) return true;
-      await new Promise((r) => setTimeout(r, 50));
+      if (window.firebase && window.firebase.auth && window.firebase.firestore) return true
+      await new Promise((r) => setTimeout(r, 50))
     }
-    return false;
+    return false
   }
 
   function mmToHHMM(mins) {
-    const h = Math.floor(mins / 60);
-    const m = mins % 60;
-    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+    const h = Math.floor(mins / 60)
+    const m = mins % 60
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`
   }
 
   function startOfDay(d) {
-    const x = new Date(d);
-    x.setHours(0, 0, 0, 0);
-    return x;
+    const x = new Date(d)
+    x.setHours(0, 0, 0, 0)
+    return x
   }
 
   function startOfWeekMonday(d) {
-    const x = startOfDay(d);
-    const day = x.getDay(); // 0=Sun..6=Sat
-    const diff = (day === 0 ? -6 : 1 - day);
-    x.setDate(x.getDate() + diff);
-    return x;
+    const x = startOfDay(d)
+    const day = x.getDay()
+    const diff = day === 0 ? -6 : 1 - day
+    x.setDate(x.getDate() + diff)
+    return x
   }
 
   function addDays(d, n) {
-    const x = new Date(d);
-    x.setDate(x.getDate() + n);
-    return x;
+    const x = new Date(d)
+    x.setDate(x.getDate() + n)
+    return x
   }
 
   function addMinutesDate(d, mins) {
-    return new Date(d.getTime() + mins * 60 * 1000);
+    return new Date(d.getTime() + mins * 60 * 1000)
   }
 
   function dateKey(d) {
-    const y = d.getFullYear();
-    const mo = String(d.getMonth() + 1).padStart(2, "0");
-    const da = String(d.getDate()).padStart(2, "0");
-    return `${y}-${mo}-${da}`;
+    const y = d.getFullYear()
+    const mo = String(d.getMonth() + 1).padStart(2, "0")
+    const da = String(d.getDate()).padStart(2, "0")
+    return `${y}-${mo}-${da}`
   }
 
   function buildTimeRows() {
-    const rows = [];
-    const lastStart = CFG.endMinutes - CFG.slotMinutes; // 17:30 - 90 => 16:00
-    let mins = CFG.startMinutes;
+    const rows = []
+    const lastStart = CFG.endMinutes - CFG.slotMinutes
+    let mins = CFG.startMinutes
     while (mins <= lastStart) {
-      rows.push(mins);
-      mins += CFG.slotMinutes;
+      rows.push(mins)
+      mins += CFG.slotMinutes
     }
-    return rows;
+    return rows
   }
 
   function dayLabel(d) {
-    const names = ["Dim", "Lun", "Mar", "Mer", "Jeu", "Ven", "Sam"];
-    return `${names[d.getDay()]} ${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const names = ["Dim", "Lun", "Mar", "Mer", "Jeu", "Ven", "Sam"]
+    return `${names[d.getDay()]} ${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`
   }
 
   function isProbablyAdblockNetworkError(err) {
-    const msg = String(err?.message || "");
-    return msg.includes("ERR_BLOCKED_BY_CLIENT") || msg.includes("blocked by client");
+    const msg = String(err?.message || "")
+    return msg.includes("ERR_BLOCKED_BY_CLIENT") || msg.includes("blocked by client")
   }
 
   function normalizePhone(s) {
-    const x = String(s || "").trim();
-    return x;
+    return String(s || "").trim()
   }
 
-  // ---------- UI: Auth ----------
   function showPanel(panelId) {
-    ["panelLogin", "panelSignup"].forEach((id) => {
-      const el = document.getElementById(id);
-      if (el) el.style.display = (id === panelId) ? "block" : "none";
-    });
-    hideBanner();
+    ;["panelLogin", "panelSignup"].forEach((id) => {
+      const el = document.getElementById(id)
+      if (el) el.style.display = id === panelId ? "block" : "none"
+    })
+    hideBanner()
   }
 
   function renderAuth(extraWarningHtml = "") {
@@ -199,126 +194,125 @@ document.addEventListener("DOMContentLoaded", async () => {
       </div>
 
       <div id="uiBanner" class="alert" style="display:none"></div>
-    `;
+    `
 
-    document.getElementById("openLogin")?.addEventListener("click", () => showPanel("panelLogin"));
-    document.getElementById("openSignup")?.addEventListener("click", () => showPanel("panelSignup"));
-    showPanel("none");
+    document.getElementById("openLogin")?.addEventListener("click", () => showPanel("panelLogin"))
+    document.getElementById("openSignup")?.addEventListener("click", () => showPanel("panelSignup"))
+    showPanel("none")
   }
 
   function wireAuthHandlers(auth) {
-    const btnLogin = document.getElementById("btnLogin");
-    const btnSignup = document.getElementById("btnSignup");
-    const btnForgot = document.getElementById("btnForgot");
+    const btnLogin = document.getElementById("btnLogin")
+    const btnSignup = document.getElementById("btnSignup")
+    const btnForgot = document.getElementById("btnForgot")
 
     if (btnLogin) {
       btnLogin.addEventListener("click", async () => {
-        hideBanner();
-        const email = (document.getElementById("loginEmail")?.value || "").trim().toLowerCase();
-        const pass = (document.getElementById("loginPass")?.value || "").trim();
+        hideBanner()
+        const email = (document.getElementById("loginEmail")?.value || "").trim().toLowerCase()
+        const pass = (document.getElementById("loginPass")?.value || "").trim()
 
         if (!email || !pass) {
-          showBanner("alert", "Veuillez renseigner votre e-mail et votre mot de passe.");
-          return;
+          showBanner("alert", "Veuillez renseigner votre e-mail et votre mot de passe.")
+          return
         }
 
         try {
-          btnLogin.disabled = true;
-          await auth.signInWithEmailAndPassword(email, pass);
+          btnLogin.disabled = true
+          await auth.signInWithEmailAndPassword(email, pass)
         } catch (err) {
-          console.error(err);
+          console.error(err)
           if (err.code === "auth/user-not-found") {
-            showBanner("alert", "Aucun compte n’existe pour cet e-mail. Veuillez créer un compte.");
+            showBanner("alert", "Aucun compte n’existe pour cet e-mail. Veuillez créer un compte.")
           } else if (err.code === "auth/wrong-password" || err.code === "auth/invalid-credential") {
-            showBanner("alert", "Mot de passe incorrect. Veuillez réessayer.");
+            showBanner("alert", "Mot de passe incorrect. Veuillez réessayer.")
           } else {
-            showBanner("alert", "Connexion impossible. Veuillez réessayer.");
+            showBanner("alert", "Connexion impossible. Veuillez réessayer.")
           }
         } finally {
-          btnLogin.disabled = false;
+          btnLogin.disabled = false
         }
-      });
+      })
     }
 
     if (btnForgot) {
       btnForgot.addEventListener("click", async () => {
-        hideBanner();
-        const email = (document.getElementById("loginEmail")?.value || "").trim().toLowerCase();
+        hideBanner()
+        const email = (document.getElementById("loginEmail")?.value || "").trim().toLowerCase()
         if (!email) {
-          showBanner("alert", "Veuillez d’abord saisir votre adresse e-mail.");
-          return;
+          showBanner("alert", "Veuillez d’abord saisir votre adresse e-mail.")
+          return
         }
         try {
-          btnForgot.disabled = true;
-          await auth.sendPasswordResetEmail(email);
-          showBanner("ok", "E-mail envoyé ✅ Vérifiez votre boîte mail et vos indésirables.");
+          btnForgot.disabled = true
+          await auth.sendPasswordResetEmail(email)
+          showBanner("ok", "E-mail envoyé ✅ Vérifiez votre boîte mail et vos indésirables.")
         } catch (err) {
-          console.error(err);
-          showBanner("ok", "Si un compte existe pour cet e-mail, un message de réinitialisation a été envoyé ✅");
+          console.error(err)
+          showBanner("ok", "Si un compte existe pour cet e-mail, un message de réinitialisation a été envoyé ✅")
         } finally {
-          btnForgot.disabled = false;
+          btnForgot.disabled = false
         }
-      });
+      })
     }
 
     if (btnSignup) {
       btnSignup.addEventListener("click", async () => {
-        hideBanner();
-        const email = (document.getElementById("signupEmail")?.value || "").trim().toLowerCase();
-        const pass = (document.getElementById("signupPass")?.value || "").trim();
+        hideBanner()
+        const email = (document.getElementById("signupEmail")?.value || "").trim().toLowerCase()
+        const pass = (document.getElementById("signupPass")?.value || "").trim()
 
         if (!email || !pass) {
-          showBanner("alert", "Veuillez renseigner votre e-mail et choisir un mot de passe.");
-          return;
+          showBanner("alert", "Veuillez renseigner votre e-mail et choisir un mot de passe.")
+          return
         }
         if (pass.length < 6) {
-          showBanner("alert", "Mot de passe : minimum 6 caractères.");
-          return;
+          showBanner("alert", "Mot de passe : minimum 6 caractères.")
+          return
         }
 
         try {
-          btnSignup.disabled = true;
-          await auth.createUserWithEmailAndPassword(email, pass);
+          btnSignup.disabled = true
+          await auth.createUserWithEmailAndPassword(email, pass)
         } catch (err) {
-          console.error(err);
+          console.error(err)
           if (err.code === "auth/email-already-in-use") {
-            showBanner("alert", "Cet e-mail est déjà enregistré. Veuillez vous connecter.");
+            showBanner("alert", "Cet e-mail est déjà enregistré. Veuillez vous connecter.")
           } else if (err.code === "auth/invalid-email") {
-            showBanner("alert", "Adresse e-mail invalide.");
+            showBanner("alert", "Adresse e-mail invalide.")
           } else {
-            showBanner("alert", "Création du compte impossible. Veuillez réessayer.");
+            showBanner("alert", "Création du compte impossible. Veuillez réessayer.")
           }
         } finally {
-          btnSignup.disabled = false;
+          btnSignup.disabled = false
         }
-      });
+      })
     }
   }
 
-  // ---------- Admin detection + redirect ----------
-  let __adminChecked = false;
-  let __isAdminCached = false;
+  let __adminChecked = false
+  let __isAdminCached = false
 
   async function isAdminUser(db, user) {
-    if (__adminChecked) return __isAdminCached;
-    __adminChecked = true;
+    if (__adminChecked) return __isAdminCached
+    __adminChecked = true
     try {
-      const snap = await db.collection("admins").doc(user.uid).get();
-      __isAdminCached = snap.exists;
-      return __isAdminCached;
+      const snap = await db.collection("admins").doc(user.uid).get()
+      __isAdminCached = snap.exists
+      return __isAdminCached
     } catch (e) {
-      console.error("isAdminUser error:", e);
-      __isAdminCached = false;
-      return false;
+      console.error("isAdminUser error:", e)
+      __isAdminCached = false
+      return false
     }
   }
 
   async function redirectIfAdmin(db, user) {
-    const admin = await isAdminUser(db, user);
-    if (!admin) return false;
+    const admin = await isAdminUser(db, user)
+    if (!admin) return false
 
-    const path = window.location.pathname || "";
-    if (path.startsWith("/admin")) return true;
+    const path = window.location.pathname || ""
+    if (path.startsWith("/admin")) return true
 
     right.innerHTML = `
       <div class="stepWrap">
@@ -326,12 +320,13 @@ document.addEventListener("DOMContentLoaded", async () => {
         <span class="muted" style="font-size:12px">${escapeHtml(user.email || "")}</span>
       </div>
       <div class="ok" style="display:block">Compte administrateur détecté ✅ Redirection vers le panneau admin…</div>
-    `;
-    setTimeout(() => { window.location.href = "/admin"; }, 250);
-    return true;
+    `
+    setTimeout(() => {
+      window.location.href = "/admin"
+    }, 250)
+    return true
   }
 
-  // ---------- UI: Profile ----------
   function renderProfileForm(userEmail) {
     right.innerHTML = `
       <div class="stepWrap">
@@ -361,19 +356,18 @@ document.addEventListener("DOMContentLoaded", async () => {
       <button id="btnSaveProfile" class="btn primary" style="margin-top:12px" type="button">Enregistrer mon profil</button>
 
       <div id="uiBanner" class="alert" style="display:none"></div>
-    `;
+    `
   }
 
   function validateProfile(data) {
-    const errors = [];
-    if (!data.company || data.company.length < 2) errors.push("Veuillez indiquer la société.");
-    if (!data.vat || data.vat.length < 6) errors.push("Veuillez indiquer le numéro BCE (ex: BE...).");
-    if (!data.phone || data.phone.length < 6) errors.push("Veuillez indiquer un numéro de téléphone.");
-    if (!data.hqAddress || data.hqAddress.length < 8) errors.push("Veuillez indiquer l’adresse du siège social.");
-    return errors;
+    const errors = []
+    if (!data.company || data.company.length < 2) errors.push("Veuillez indiquer la société.")
+    if (!data.vat || data.vat.length < 6) errors.push("Veuillez indiquer le numéro BCE (ex: BE...).")
+    if (!data.phone || data.phone.length < 6) errors.push("Veuillez indiquer un numéro de téléphone.")
+    if (!data.hqAddress || data.hqAddress.length < 8) errors.push("Veuillez indiquer l’adresse du siège social.")
+    return errors
   }
 
-  // ---------- UI: Booking + smart form ----------
   function renderBookingShell(userEmail) {
     right.innerHTML = `
       <div class="stepWrap">
@@ -493,187 +487,189 @@ document.addEventListener("DOMContentLoaded", async () => {
       <div class="divider"></div>
       <h3 style="margin:0 0 8px">Mes rendez-vous</h3>
       <div class="apptList" id="apptList"></div>
-    `;
+    `
   }
 
   function makeWeekDays(weekStart) {
-    return Array.from({ length: CFG.daysToShow }, (_, i) => addDays(weekStart, i));
+    return Array.from({ length: CFG.daysToShow }, (_, i) => addDays(weekStart, i))
   }
 
   function renderCalendarGrid(days, timeRows, slotStateByKey) {
-    const grid = document.getElementById("calGrid");
-    if (!grid) return;
+    const grid = document.getElementById("calGrid")
+    if (!grid) return
 
     const headRow = `
       <div class="calRow">
         <div class="calCell timeCell"></div>
         ${days.map((d) => `<div class="calCell dayHead">${escapeHtml(dayLabel(d))}</div>`).join("")}
       </div>
-    `;
+    `
 
-    const rowsHtml = timeRows.map((mins) => {
-      const timeCell = `<div class="calCell timeCell">${escapeHtml(mmToHHMM(mins))}</div>`;
+    const rowsHtml = timeRows
+      .map((mins) => {
+        const timeCell = `<div class="calCell timeCell">${escapeHtml(mmToHHMM(mins))}</div>`
 
-      const dayCells = days.map((d) => {
-        const slotStart = new Date(d);
-        slotStart.setHours(0, 0, 0, 0);
-        slotStart.setMinutes(mins);
+        const dayCells = days
+          .map((d) => {
+            const slotStart = new Date(d)
+            slotStart.setHours(0, 0, 0, 0)
+            slotStart.setMinutes(mins)
 
-        const key = `${dateKey(slotStart)}_${String(slotStart.getHours()).padStart(2, "0")}${String(slotStart.getMinutes()).padStart(2, "0")}`;
-        const st = slotStateByKey.get(key) || { status: "blocked", disabled: true, title: "Indisponible", label: "" };
+            const key = `${dateKey(slotStart)}_${String(slotStart.getHours()).padStart(2, "0")}${String(slotStart.getMinutes()).padStart(2, "0")}`
+            const st = slotStateByKey.get(key) || { status: "blocked", disabled: true, title: "Indisponible", label: "" }
 
-        const classes = ["calCell", "slot"];
-        if (st.status === "free") classes.push("free");
-        if (st.status === "blocked") classes.push("blocked");
-        if (st.status === "selected") classes.push("selected");
-        if (st.status === "mine") classes.push("mine");
-        if (st.disabled) classes.push("disabled");
+            const classes = ["calCell", "slot"]
+            if (st.status === "free") classes.push("free")
+            if (st.status === "blocked") classes.push("blocked")
+            if (st.status === "selected") classes.push("selected")
+            if (st.status === "mine") classes.push("mine")
+            if (st.disabled) classes.push("disabled")
 
-        // label: on affiche uniquement "Libre" ou "Mon RDV" pour faire pro
-        const inside = st.label ? `<span class="slotPill">${escapeHtml(st.label)}</span>` : "";
+            const inside = st.label ? `<span class="slotPill">${escapeHtml(st.label)}</span>` : ""
 
-        return `
-          <div class="${classes.join(" ")}" data-slotkey="${escapeHtml(key)}" title="${escapeHtml(st.title || "")}">
-            ${inside}
-          </div>
-        `;
-      }).join("");
+            return `
+              <div class="${classes.join(" ")}" data-slotkey="${escapeHtml(key)}" title="${escapeHtml(st.title || "")}">
+                ${inside}
+              </div>
+            `
+          })
+          .join("")
 
-      return `<div class="calRow">${timeCell}${dayCells}</div>`;
-    }).join("");
+        return `<div class="calRow">${timeCell}${dayCells}</div>`
+      })
+      .join("")
 
-    grid.innerHTML = headRow + rowsHtml;
+    grid.innerHTML = headRow + rowsHtml
   }
 
-  // ---------- Firestore ops ----------
   async function fetchFreeSlotsForWeek(db, weekStart) {
-    const weekEnd = addDays(weekStart, 7);
-    const tsStart = firebase.firestore.Timestamp.fromDate(weekStart);
-    const tsEnd = firebase.firestore.Timestamp.fromDate(weekEnd);
+    const weekEnd = addDays(weekStart, 7)
+    const tsStart = firebase.firestore.Timestamp.fromDate(weekStart)
+    const tsEnd = firebase.firestore.Timestamp.fromDate(weekEnd)
 
-    const snap = await db.collection("freeSlots")
+    const snap = await db
+      .collection("freeSlots")
       .where("start", ">=", tsStart)
       .where("start", "<", tsEnd)
-      .get();
+      .get()
 
-    const map = new Map();
+    const map = new Map()
     snap.forEach((doc) => {
-      const d = doc.data();
-      const start = d.start?.toDate?.() ? d.start.toDate() : null;
-      if (!start) return;
-      const key = `${dateKey(start)}_${String(start.getHours()).padStart(2, "0")}${String(start.getMinutes()).padStart(2, "0")}`;
-      map.set(key, { id: doc.id, ...d });
-    });
-    return map;
+      const d = doc.data()
+      const start = d.start?.toDate?.() ? d.start.toDate() : null
+      if (!start) return
+      const key = `${dateKey(start)}_${String(start.getHours()).padStart(2, "0")}${String(start.getMinutes()).padStart(2, "0")}`
+      map.set(key, { id: doc.id, ...d })
+    })
+    return map
   }
 
   async function fetchMyAppointments(db, uid) {
-    // NOTE: si jamais tu n’as pas d’index composite, on garde une requête simple
-    const snap = await db.collection("appointments")
+    const snap = await db
+      .collection("appointments")
       .where("uid", "==", uid)
       .orderBy("start", "desc")
       .limit(CFG.maxAppointmentsToShow)
-      .get();
+      .get()
 
-    const items = [];
-    snap.forEach((doc) => items.push({ id: doc.id, ...doc.data() }));
-    return items;
+    const items = []
+    snap.forEach((doc) => items.push({ id: doc.id, ...doc.data() }))
+    return items
   }
 
   function appointmentStartKey(a) {
-    const start = a.start?.toDate?.() ? a.start.toDate() : null;
-    if (!start) return null;
-    return `${dateKey(start)}_${String(start.getHours()).padStart(2, "0")}${String(start.getMinutes()).padStart(2, "0")}`;
+    const start = a.start?.toDate?.() ? a.start.toDate() : null
+    if (!start) return null
+    return `${dateKey(start)}_${String(start.getHours()).padStart(2, "0")}${String(start.getMinutes()).padStart(2, "0")}`
   }
 
   function renderAppointments(list) {
-    const el = document.getElementById("apptList");
-    if (!el) return;
+    const el = document.getElementById("apptList")
+    if (!el) return
 
     if (!list.length) {
-      el.innerHTML = `<div class="muted">Aucune demande pour l’instant.</div>`;
-      return;
+      el.innerHTML = `<div class="muted">Aucune demande pour l’instant.</div>`
+      return
     }
 
-    el.innerHTML = list.map((a) => {
-      const st = (a.status || "pending").toLowerCase();
-      const badgeClass =
-        st === "pending" ? "pending" :
-        st === "validated" ? "validated" :
-        st === "refused" ? "refused" :
-        st === "cancelled" ? "cancelled" : "pending";
+    el.innerHTML = list
+      .map((a) => {
+        const st = (a.status || "pending").toLowerCase()
+        const badgeClass =
+          st === "pending" ? "pending" :
+          st === "validated" ? "validated" :
+          st === "refused" ? "refused" :
+          st === "cancelled" ? "cancelled" : "pending"
 
-      const start = a.start?.toDate?.() ? a.start.toDate() : null;
-      const when = start
-        ? `${dayLabel(start)} • ${String(start.getHours()).padStart(2, "0")}:${String(start.getMinutes()).padStart(2, "0")}`
-        : "(date inconnue)";
+        const start = a.start?.toDate?.() ? a.start.toDate() : null
+        const when = start
+          ? `${dayLabel(start)} • ${String(start.getHours()).padStart(2, "0")}:${String(start.getMinutes()).padStart(2, "0")}`
+          : "(date inconnue)"
 
-      const addr = a.addressControl ? String(a.addressControl) : "";
-      const types = Array.isArray(a.controlTypes) ? a.controlTypes.join(" + ") : "";
+        const addr = a.addressControl ? String(a.addressControl) : ""
+        const types = Array.isArray(a.controlTypes) ? a.controlTypes.join(" + ") : ""
 
-      return `
-        <div class="apptCard">
-          <div class="apptTop">
-            <div>
-              <div style="font-weight:900">${escapeHtml(when)}</div>
-              ${addr ? `<div class="muted" style="margin-top:4px">${escapeHtml(addr)}</div>` : ``}
-              ${types ? `<div class="tiny" style="margin-top:4px">${escapeHtml(types)}</div>` : ``}
+        return `
+          <div class="apptCard">
+            <div class="apptTop">
+              <div>
+                <div style="font-weight:900">${escapeHtml(when)}</div>
+                ${addr ? `<div class="muted" style="margin-top:4px">${escapeHtml(addr)}</div>` : ``}
+                ${types ? `<div class="tiny" style="margin-top:4px">${escapeHtml(types)}</div>` : ``}
+              </div>
+              <div class="badge ${badgeClass}">${escapeHtml(st === "pending" ? "En attente" : st)}</div>
             </div>
-            <div class="badge ${badgeClass}">${escapeHtml(st === "pending" ? "En attente" : st)}</div>
           </div>
-        </div>
-      `;
-    }).join("");
+        `
+      })
+      .join("")
   }
 
   function validateSmartForm(payload) {
-    const errors = [];
+    const errors = []
 
     if (!payload.addressControl || payload.addressControl.length < 8) {
-      errors.push("Veuillez indiquer l’adresse du contrôle (Rue, n°, CP, Ville).");
+      errors.push("Veuillez indiquer l’adresse du contrôle (Rue, n°, CP, Ville).")
     }
 
     if (!payload.controlTypes || !payload.controlTypes.length) {
-      errors.push("Veuillez sélectionner au moins 1 type de contrôle.");
+      errors.push("Veuillez sélectionner au moins 1 type de contrôle.")
     }
 
     if (payload.controlTypes.includes("Autre")) {
       if (!payload.controlTypeOther || payload.controlTypeOther.length < 3) {
-        errors.push("Veuillez préciser le type “Autre”.");
+        errors.push("Veuillez préciser le type “Autre”.")
       }
     }
 
-    if (payload.photosAvailable === "Oui") {
-      // le lien reste optionnel, mais on peut suggérer
-      // pas bloquant
-    }
-
-    return errors;
+    return errors
   }
 
   async function bookSlot(db, user, selected, smartPayload) {
-    // IMPORTANT: rules freeSlots update client => status+updatedAt ONLY
-    const apptRef = db.collection("appointments").doc();
-    const lockRef = db.collection("slots").doc();
-    const freeRef = db.collection("freeSlots").doc(selected.freeSlotDocId);
+    const apptRef = db.collection("appointments").doc()
 
-    const startTs = firebase.firestore.Timestamp.fromDate(selected.startDate);
-    const endTs = firebase.firestore.Timestamp.fromDate(selected.endDate);
+    // ✅ lock déterministe = 1 doc par créneau
+    const lockRef = db.collection("slots").doc(selected.freeSlotDocId)
+
+    const freeRef = db.collection("freeSlots").doc(selected.freeSlotDocId)
+
+    const startTs = firebase.firestore.Timestamp.fromDate(selected.startDate)
+    const endTs = firebase.firestore.Timestamp.fromDate(selected.endDate)
 
     await db.runTransaction(async (tx) => {
-      const freeSnap = await tx.get(freeRef);
-      if (!freeSnap.exists) throw new Error("Créneau introuvable.");
+      const freeSnap = await tx.get(freeRef)
+      if (!freeSnap.exists) throw new Error("Créneau introuvable.")
 
-      const freeData = freeSnap.data() || {};
+      const freeData = freeSnap.data() || {}
       if (String(freeData.status || "").toLowerCase() !== "free") {
-        throw new Error("Ce créneau n’est plus disponible.");
+        throw new Error("Ce créneau n’est plus disponible.")
       }
 
-      // ✅ conforme aux rules client: status + updatedAt seulement
+      // ✅ conforme rules client: status + updatedAt seulement
       tx.update(freeRef, {
-        status: "blocked",
+        status: "pending",
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      });
+      })
 
       tx.set(apptRef, {
         uid: user.uid,
@@ -684,7 +680,6 @@ document.addEventListener("DOMContentLoaded", async () => {
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
 
-        // --------- SMART FORM ----------
         addressControl: smartPayload.addressControl,
         region: smartPayload.region || "",
         chaufferie: smartPayload.chaufferie || "",
@@ -696,338 +691,311 @@ document.addEventListener("DOMContentLoaded", async () => {
         photosAvailable: smartPayload.photosAvailable || "Non",
         photosLink: smartPayload.photosLink || "",
         note: smartPayload.note || "",
-      });
+      })
 
       tx.set(lockRef, {
         uid: user.uid,
         start: startTs,
         end: endTs,
         status: "booked",
+        slotId: selected.freeSlotDocId,
         appointmentId: apptRef.id,
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-      });
-    });
+      })
+    })
   }
 
-  // ---------- MAIN FLOW ----------
-  renderAuth();
-  setStatus(false);
+  renderAuth()
+  setStatus(false)
 
-  const okFirebase = await waitForFirebase(10000);
+  const okFirebase = await waitForFirebase(10000)
   if (!okFirebase) {
     const warningHtml = `
       <div class="warn" style="display:block">
         ⚠️ Firebase n’est pas chargé. La connexion ne fonctionnera pas.
         <div class="tiny" style="margin-top:6px">Vérifie que /__/firebase/init.js se charge bien.</div>
       </div>
-    `;
-    renderAuth(warningHtml);
-    return;
+    `
+    renderAuth(warningHtml)
+    return
   }
 
-  const auth = firebase.auth();
-  const db = firebase.firestore();
+  const auth = firebase.auth()
+  const db = firebase.firestore()
 
-  try { await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); } catch {}
+  try {
+    await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)
+  } catch {}
 
   btnLogout.addEventListener("click", async () => {
-    await auth.signOut();
-  });
+    await auth.signOut()
+  })
 
-  wireAuthHandlers(auth);
+  wireAuthHandlers(auth)
 
-  // Calendar state
-  let currentWeekStart = startOfWeekMonday(new Date());
-  let selectedSlot = null; // { key, startDate, endDate, freeSlotDocId }
-  let lastFreeSlotsMap = new Map();
-  let myApptKeys = new Set();
+  let currentWeekStart = startOfWeekMonday(new Date())
+  let selectedSlot = null
+  let lastFreeSlotsMap = new Map()
+  let myApptKeys = new Set()
 
   async function refreshCalendarAndAppointments(user) {
-    const timeRows = buildTimeRows();
-    const days = makeWeekDays(currentWeekStart);
+    const timeRows = buildTimeRows()
+    const days = makeWeekDays(currentWeekStart)
 
-    const calSub = document.getElementById("calSub");
-    const calTitle = document.getElementById("calTitle");
-    if (calTitle) calTitle.textContent = `Semaine du ${days[0].toLocaleDateString("fr-BE")}`;
-    if (calSub) calSub.textContent = `Créneaux: ${CFG.slotMinutes} min (RDV ${CFG.appointmentMinutes} + trajet)`;
+    const calSub = document.getElementById("calSub")
+    const calTitle = document.getElementById("calTitle")
+    if (calTitle) calTitle.textContent = `Semaine du ${days[0].toLocaleDateString("fr-BE")}`
+    if (calSub) calSub.textContent = `Créneaux: ${CFG.slotMinutes} min (RDV ${CFG.appointmentMinutes} + trajet)`
 
-    // --- fetch my appointments (needed for "Mon RDV" in grid) ---
-    let myList = [];
+    let myList = []
     try {
-      myList = await fetchMyAppointments(db, user.uid);
+      myList = await fetchMyAppointments(db, user.uid)
       myApptKeys = new Set(
         myList
           .filter((a) => String(a.status || "").toLowerCase() !== "cancelled")
           .map(appointmentStartKey)
           .filter(Boolean)
-      );
-      renderAppointments(myList);
+      )
+      renderAppointments(myList)
     } catch (e) {
-      console.error(e);
-      // on n’empêche pas le calendrier si la liste échoue
+      console.error(e)
     }
 
-    // --- freeSlots ---
     try {
-      lastFreeSlotsMap = await fetchFreeSlotsForWeek(db, currentWeekStart);
+      lastFreeSlotsMap = await fetchFreeSlotsForWeek(db, currentWeekStart)
     } catch (e) {
-      console.error(e);
-      if (!isProbablyAdblockNetworkError(e)) showBanner("alert", "Impossible de charger les créneaux.");
-      lastFreeSlotsMap = new Map();
+      console.error(e)
+      if (!isProbablyAdblockNetworkError(e)) showBanner("alert", "Impossible de charger les créneaux.")
+      lastFreeSlotsMap = new Map()
     }
 
-    const slotStateByKey = new Map();
-    const now = new Date();
-    const min48 = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+    const slotStateByKey = new Map()
+    const now = new Date()
+    const min48 = new Date(now.getTime() + 48 * 60 * 60 * 1000)
 
     for (const day of days) {
       for (const mins of timeRows) {
-        const start = new Date(day);
-        start.setHours(0, 0, 0, 0);
-        start.setMinutes(mins);
+        const start = new Date(day)
+        start.setHours(0, 0, 0, 0)
+        start.setMinutes(mins)
 
-        const key = `${dateKey(start)}_${String(start.getHours()).padStart(2, "0")}${String(start.getMinutes()).padStart(2, "0")}`;
-        const freeDoc = lastFreeSlotsMap.get(key);
+        const key = `${dateKey(start)}_${String(start.getHours()).padStart(2, "0")}${String(start.getMinutes()).padStart(2, "0")}`
+        const freeDoc = lastFreeSlotsMap.get(key)
 
-        // default: indisponible
-        let status = "blocked";
-        let disabled = true;
-        let title = "Indisponible";
-        let label = "";
+        let status = "blocked"
+        let disabled = true
+        let title = "Indisponible"
+        let label = ""
 
-        // 1) "Mon RDV" doit primer (propre pour le client)
         if (myApptKeys.has(key)) {
-          status = "mine";
-          disabled = true;
-          title = "Votre rendez-vous";
-          label = "Mon RDV";
+          status = "mine"
+          disabled = true
+          title = "Votre rendez-vous"
+          label = "Mon RDV"
         } else if (!freeDoc) {
-          // slot non généré => indisponible
-          status = "blocked";
-          disabled = true;
-          title = "Indisponible";
+          status = "blocked"
+          disabled = true
+          title = "Indisponible"
         } else {
-          const st = String(freeDoc.status || "blocked").toLowerCase();
+          const st = String(freeDoc.status || "blocked").toLowerCase()
 
-          // règle <48h: on cache la raison, on met juste indisponible
           if (start < min48) {
-            status = "blocked";
-            disabled = true;
-            title = "Indisponible";
+            status = "blocked"
+            disabled = true
+            title = "Indisponible"
           } else if (st === "free") {
-            status = "free";
-            disabled = false;
-            title = "Disponible";
-            label = "Libre";
+            status = "free"
+            disabled = false
+            title = "Disponible"
+            label = "Libre"
           } else {
-            status = "blocked";
-            disabled = true;
-            title = "Indisponible";
+            status = "blocked"
+            disabled = true
+            title = "Indisponible"
           }
         }
 
-        // sélection
         if (selectedSlot && selectedSlot.key === key) {
-          // si devenu indispo => reset
-          const stillFree = !!freeDoc && String(freeDoc.status || "").toLowerCase() === "free" && start >= min48;
+          const stillFree = !!freeDoc && String(freeDoc.status || "").toLowerCase() === "free" && start >= min48
           if (!stillFree) {
-            selectedSlot = null;
+            selectedSlot = null
           } else {
-            status = "selected";
-            disabled = false;
-            title = "Sélectionné";
-            label = "Libre";
+            status = "selected"
+            disabled = false
+            title = "Sélectionné"
+            label = "Libre"
           }
         }
 
-        slotStateByKey.set(key, { status, disabled, title, label });
+        slotStateByKey.set(key, { status, disabled, title, label })
       }
     }
 
-    renderCalendarGrid(days, timeRows, slotStateByKey);
+    renderCalendarGrid(days, timeRows, slotStateByKey)
 
-    // click handlers
     document.querySelectorAll(".slot[data-slotkey]").forEach((cell) => {
       cell.addEventListener("click", async () => {
-        hideBanner();
+        hideBanner()
 
-        const key = cell.getAttribute("data-slotkey");
-        if (!key) return;
+        const key = cell.getAttribute("data-slotkey")
+        if (!key) return
 
-        // slots indisponibles => rien
-        const freeDoc = lastFreeSlotsMap.get(key);
+        const freeDoc = lastFreeSlotsMap.get(key)
 
-        // toggle off
         if (selectedSlot && selectedSlot.key === key) {
-          selectedSlot = null;
-          const b = document.getElementById("btnBook");
-          if (b) b.disabled = true;
-          await refreshCalendarAndAppointments(user);
-          return;
+          selectedSlot = null
+          const b = document.getElementById("btnBook")
+          if (b) b.disabled = true
+          await refreshCalendarAndAppointments(user)
+          return
         }
 
-        // si c’est mon rdv => rien
-        if (myApptKeys.has(key)) return;
+        if (myApptKeys.has(key)) return
+        if (!freeDoc || String(freeDoc.status || "").toLowerCase() !== "free") return
 
-        // faut que ce soit free (et >=48h)
-        if (!freeDoc || String(freeDoc.status || "").toLowerCase() !== "free") return;
+        const [dPart, hm] = key.split("_")
+        const [yy, mo, dd] = dPart.split("-").map((x) => parseInt(x, 10))
+        const hh = parseInt(hm.slice(0, 2), 10)
+        const mm = parseInt(hm.slice(2, 4), 10)
+        const start = new Date(yy, mo - 1, dd, hh, mm, 0, 0)
 
-        const [dPart, hm] = key.split("_");
-        const [yy, mo, dd] = dPart.split("-").map((x) => parseInt(x, 10));
-        const hh = parseInt(hm.slice(0, 2), 10);
-        const mm = parseInt(hm.slice(2, 4), 10);
-        const start = new Date(yy, (mo - 1), dd, hh, mm, 0, 0);
-
-        const min48now = new Date(Date.now() + 48 * 60 * 60 * 1000);
+        const min48now = new Date(Date.now() + 48 * 60 * 60 * 1000)
         if (start < min48now) {
-          // on ne montre pas “<48h”, on dit juste indisponible
-          showBanner("warn", "Ce créneau n’est plus disponible.");
-          return;
+          showBanner("warn", "Ce créneau n’est plus disponible.")
+          return
         }
 
-        const end = addMinutesDate(start, CFG.slotMinutes);
+        const end = addMinutesDate(start, CFG.slotMinutes)
 
-        selectedSlot = { key, startDate: start, endDate: end, freeSlotDocId: freeDoc.id };
-        const b = document.getElementById("btnBook");
-        if (b) b.disabled = false;
-        await refreshCalendarAndAppointments(user);
-      });
-    });
+        selectedSlot = { key, startDate: start, endDate: end, freeSlotDocId: freeDoc.id }
+        const b = document.getElementById("btnBook")
+        if (b) b.disabled = false
+        await refreshCalendarAndAppointments(user)
+      })
+    })
   }
 
   async function bindCalendarNav(user) {
     document.getElementById("calPrev")?.addEventListener("click", async () => {
-      currentWeekStart = addDays(currentWeekStart, -7);
-      selectedSlot = null;
-      const b = document.getElementById("btnBook");
-      if (b) b.disabled = true;
-      await refreshCalendarAndAppointments(user);
-    });
+      currentWeekStart = addDays(currentWeekStart, -7)
+      selectedSlot = null
+      const b = document.getElementById("btnBook")
+      if (b) b.disabled = true
+      await refreshCalendarAndAppointments(user)
+    })
 
     document.getElementById("calNext")?.addEventListener("click", async () => {
-      currentWeekStart = addDays(currentWeekStart, 7);
-      selectedSlot = null;
-      const b = document.getElementById("btnBook");
-      if (b) b.disabled = true;
-      await refreshCalendarAndAppointments(user);
-    });
+      currentWeekStart = addDays(currentWeekStart, 7)
+      selectedSlot = null
+      const b = document.getElementById("btnBook")
+      if (b) b.disabled = true
+      await refreshCalendarAndAppointments(user)
+    })
 
     document.getElementById("calToday")?.addEventListener("click", async () => {
-      currentWeekStart = startOfWeekMonday(new Date());
-      selectedSlot = null;
-      const b = document.getElementById("btnBook");
-      if (b) b.disabled = true;
-      await refreshCalendarAndAppointments(user);
-    });
+      currentWeekStart = startOfWeekMonday(new Date())
+      selectedSlot = null
+      const b = document.getElementById("btnBook")
+      if (b) b.disabled = true
+      await refreshCalendarAndAppointments(user)
+    })
   }
 
   function collectSmartForm() {
-    const addressControl = (document.getElementById("f_address")?.value || "").trim();
-    const region = (document.getElementById("f_region")?.value || "").trim();
-    const chaufferie = (document.getElementById("f_chaufferie")?.value || "").trim();
+    const addressControl = (document.getElementById("f_address")?.value || "").trim()
+    const region = (document.getElementById("f_region")?.value || "").trim()
+    const chaufferie = (document.getElementById("f_chaufferie")?.value || "").trim()
 
-    const controlTypes = [];
+    const controlTypes = []
     document.querySelectorAll("#f_types input[type='checkbox']:checked").forEach((el) => {
-      controlTypes.push(String(el.value));
-    });
+      controlTypes.push(String(el.value))
+    })
 
-    const controlTypeOther = (document.getElementById("f_type_other")?.value || "").trim();
-    const pressure = (document.getElementById("f_pressure")?.value || "").trim();
-    const devicesCount = (document.getElementById("f_devices")?.value || "").trim();
-    const powerKw = (document.getElementById("f_power")?.value || "").trim();
-    const photosAvailable = (document.getElementById("f_photos")?.value || "Non").trim();
-    const photosLink = (document.getElementById("f_photos_link")?.value || "").trim();
-    const note = (document.getElementById("f_note")?.value || "").trim();
+    const controlTypeOther = (document.getElementById("f_type_other")?.value || "").trim()
+    const pressure = (document.getElementById("f_pressure")?.value || "").trim()
+    const devicesCount = (document.getElementById("f_devices")?.value || "").trim()
+    const powerKw = (document.getElementById("f_power")?.value || "").trim()
+    const photosAvailable = (document.getElementById("f_photos")?.value || "Non").trim()
+    const photosLink = (document.getElementById("f_photos_link")?.value || "").trim()
+    const note = (document.getElementById("f_note")?.value || "").trim()
 
-    return {
-      addressControl,
-      region,
-      chaufferie,
-      controlTypes,
-      controlTypeOther,
-      pressure,
-      devicesCount,
-      powerKw,
-      photosAvailable,
-      photosLink,
-      note,
-    };
+    return { addressControl, region, chaufferie, controlTypes, controlTypeOther, pressure, devicesCount, powerKw, photosAvailable, photosLink, note }
   }
 
   async function bindBookButton(user) {
     document.getElementById("btnBook")?.addEventListener("click", async () => {
-      hideBanner();
-      const btnBook = document.getElementById("btnBook");
+      hideBanner()
+      const btnBook = document.getElementById("btnBook")
 
       if (!selectedSlot) {
-        showBanner("alert", "Veuillez sélectionner un créneau libre.");
-        return;
+        showBanner("alert", "Veuillez sélectionner un créneau libre.")
+        return
       }
 
-      const smart = collectSmartForm();
-      smart.devicesCount = String(smart.devicesCount || "").trim();
-      smart.powerKw = String(smart.powerKw || "").trim();
-      smart.note = String(smart.note || "").trim();
-      smart.addressControl = String(smart.addressControl || "").trim();
-      smart.controlTypeOther = String(smart.controlTypeOther || "").trim();
-      smart.region = String(smart.region || "").trim();
-      smart.chaufferie = String(smart.chaufferie || "").trim();
-      smart.pressure = String(smart.pressure || "").trim();
-      smart.photosLink = String(smart.photosLink || "").trim();
-      smart.photosAvailable = String(smart.photosAvailable || "Non").trim();
+      const smart = collectSmartForm()
+      smart.devicesCount = String(smart.devicesCount || "").trim()
+      smart.powerKw = String(smart.powerKw || "").trim()
+      smart.note = String(smart.note || "").trim()
+      smart.addressControl = String(smart.addressControl || "").trim()
+      smart.controlTypeOther = String(smart.controlTypeOther || "").trim()
+      smart.region = String(smart.region || "").trim()
+      smart.chaufferie = String(smart.chaufferie || "").trim()
+      smart.pressure = String(smart.pressure || "").trim()
+      smart.photosLink = String(smart.photosLink || "").trim()
+      smart.photosAvailable = String(smart.photosAvailable || "Non").trim()
 
-      const errs = validateSmartForm(smart);
+      const errs = validateSmartForm(smart)
       if (errs.length) {
-        showBanner("alert", errs[0]);
-        return;
+        showBanner("alert", errs[0])
+        return
       }
 
       try {
-        if (btnBook) btnBook.disabled = true;
-        await bookSlot(db, user, selectedSlot, smart);
-        showBanner("ok", "Demande envoyée ✅ (en attente de validation)");
-        selectedSlot = null;
-        if (btnBook) btnBook.disabled = true;
-        await refreshCalendarAndAppointments(user);
+        if (btnBook) btnBook.disabled = true
+        await bookSlot(db, user, selectedSlot, smart)
+        showBanner("ok", "Demande envoyée ✅ (en attente de validation)")
+        selectedSlot = null
+        if (btnBook) btnBook.disabled = true
+        await refreshCalendarAndAppointments(user)
       } catch (e) {
-        console.error(e);
+        console.error(e)
         if (isProbablyAdblockNetworkError(e)) {
-          showBanner("warn", "Une extension (adblock) bloque des appels réseau.");
+          showBanner("warn", "Une extension (adblock) bloque des appels réseau.")
         } else {
-          showBanner("alert", e?.message || "Réservation impossible. Le créneau vient peut-être d’être pris.");
+          showBanner("alert", e?.message || "Réservation impossible. Le créneau vient peut-être d’être pris.")
         }
       } finally {
-        if (btnBook) btnBook.disabled = !selectedSlot;
+        if (btnBook) btnBook.disabled = !selectedSlot
       }
-    });
+    })
   }
 
   async function ensureProfileThenBooking(user) {
-    const didRedirect = await redirectIfAdmin(db, user);
-    if (didRedirect) return;
+    const didRedirect = await redirectIfAdmin(db, user)
+    if (didRedirect) return
 
-    let snap;
+    let snap
     try {
-      snap = await db.collection("clients").doc(user.uid).get();
+      snap = await db.collection("clients").doc(user.uid).get()
     } catch (e) {
-      console.error(e);
+      console.error(e)
       right.innerHTML = `
         <div class="stepWrap">
           <span class="step">Erreur</span>
           <span class="muted" style="font-size:12px">Profil</span>
         </div>
         <div class="alert" style="display:block">Impossible de lire Firestore (rules / réseau).</div>
-      `;
-      return;
+      `
+      return
     }
 
     if (!snap.exists) {
-      renderProfileForm(user.email || "");
-      setStatus(true);
+      renderProfileForm(user.email || "")
+      setStatus(true)
 
-      const btn = document.getElementById("btnSaveProfile");
+      const btn = document.getElementById("btnSaveProfile")
       btn?.addEventListener("click", async () => {
-        hideBanner();
+        hideBanner()
 
         const data = {
           email: (user.email || "").toLowerCase(),
@@ -1037,68 +1005,63 @@ document.addEventListener("DOMContentLoaded", async () => {
           hqAddress: (document.getElementById("p_hq")?.value || "").trim(),
           status: "ok",
           updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-        };
+        }
 
-        const errs = validateProfile(data);
+        const errs = validateProfile(data)
         if (errs.length) {
-          showBanner("alert", errs[0]);
-          return;
+          showBanner("alert", errs[0])
+          return
         }
 
         try {
-          btn.disabled = true;
+          btn.disabled = true
           await db.collection("clients").doc(user.uid).set(
             { ...data, createdAt: firebase.firestore.FieldValue.serverTimestamp() },
             { merge: true }
-          );
+          )
 
-          renderBookingShell(user.email || "");
-          selectedSlot = null;
-          const b = document.getElementById("btnBook");
-          if (b) b.disabled = true;
+          renderBookingShell(user.email || "")
+          selectedSlot = null
+          const b = document.getElementById("btnBook")
+          if (b) b.disabled = true
 
-          await bindCalendarNav(user);
-          await bindBookButton(user);
-          await refreshCalendarAndAppointments(user);
+          await bindCalendarNav(user)
+          await bindBookButton(user)
+          await refreshCalendarAndAppointments(user)
         } catch (e) {
-          console.error(e);
-          if (!isProbablyAdblockNetworkError(e)) {
-            showBanner("alert", "Impossible d’enregistrer le profil (rules / réseau).");
-          } else {
-            showBanner("warn", "Une extension (adblock) bloque certains appels.");
-          }
+          console.error(e)
+          if (!isProbablyAdblockNetworkError(e)) showBanner("alert", "Impossible d’enregistrer le profil (rules / réseau).")
+          else showBanner("warn", "Une extension (adblock) bloque certains appels.")
         } finally {
-          btn.disabled = false;
+          btn.disabled = false
         }
-      });
+      })
 
-      return;
+      return
     }
 
-    renderBookingShell(user.email || "");
-    selectedSlot = null;
-    const b = document.getElementById("btnBook");
-    if (b) b.disabled = true;
+    renderBookingShell(user.email || "")
+    selectedSlot = null
+    const b = document.getElementById("btnBook")
+    if (b) b.disabled = true
 
-    await bindCalendarNav(user);
-    await bindBookButton(user);
-    await refreshCalendarAndAppointments(user);
+    await bindCalendarNav(user)
+    await bindBookButton(user)
+    await refreshCalendarAndAppointments(user)
   }
 
-  // ---------- Auth state ----------
   auth.onAuthStateChanged(async (user) => {
-    setStatus(!!user);
+    setStatus(!!user)
 
     if (!user) {
-      __adminChecked = false;
-      __isAdminCached = false;
-
-      renderAuth();
-      wireAuthHandlers(auth);
-      return;
+      __adminChecked = false
+      __isAdminCached = false
+      renderAuth()
+      wireAuthHandlers(auth)
+      return
     }
 
-    hideBanner();
-    await ensureProfileThenBooking(user);
-  });
-});
+    hideBanner()
+    await ensureProfileThenBooking(user)
+  })
+})

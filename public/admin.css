@@ -1,6 +1,6 @@
 /* =========================================
    Admin — Goffin Booking (PRO)
-   Compatible admin.html option 1 + admin.v3.js
+   Compatible admin.html + admin.v3.js
    ========================================= */
 
 :root{
@@ -40,8 +40,6 @@ body{
     );
 }
 
-/* ================= HEADER ================= */
-
 header{
   color:#fff;
   padding: 18px var(--gutter) 16px;
@@ -65,6 +63,12 @@ header{
   margin: 6px 0 0;
   opacity:.92;
   font-size: 13px;
+}
+
+.brand .versionLine{
+  margin: 6px 0 0;
+  opacity: .85;
+  color:#eaf2ff;
 }
 
 .status{
@@ -103,8 +107,6 @@ header{
   color:#fff;
 }
 
-/* ================= LAYOUT ================= */
-
 main{
   max-width: var(--wrap);
   margin: 0 auto;
@@ -116,8 +118,6 @@ main{
   grid-template-columns: 420px 1fr;
   gap: 16px;
   align-items:start;
-
-  /* remonte proprement */
   margin-top: -70px;
 }
 
@@ -150,7 +150,10 @@ h2{
   color: var(--muted);
 }
 
-/* ================= FORM ================= */
+.fieldTitle{
+  font-weight: 900;
+  margin-bottom: 6px;
+}
 
 .row{
   display:flex;
@@ -158,6 +161,16 @@ h2{
   flex-wrap:wrap;
 }
 .row > *{ flex:1; min-width: 180px; }
+
+.rowEnd{
+  display:flex;
+  align-items:flex-end;
+  gap:10px;
+}
+
+.emptyState{
+  margin-top:10px;
+}
 
 input, select{
   width:100%;
@@ -173,8 +186,6 @@ input:focus, select:focus{
   border-color:#9db7d8;
   box-shadow: 0 0 0 3px rgba(27,95,168,.12);
 }
-
-/* ================= BUTTONS ================= */
 
 .btn{
   padding: 10px 12px;
@@ -198,15 +209,11 @@ input:focus, select:focus{
 .btn.bad{ background: var(--danger); color:#fff; border-color: var(--danger); }
 .btn.warn{ background: #fff7ed; color:#9a3412; border-color:#fed7aa; }
 
-/* ================= DIVIDER ================= */
-
 .hr{
   height:1px;
   background: var(--line);
   margin: 14px 0;
 }
-
-/* ================= LIST ================= */
 
 .list{
   display:flex;
@@ -229,6 +236,31 @@ input:focus, select:focus{
   align-items:flex-start;
 }
 
+.strongLine{
+  font-weight: 900;
+}
+
+.topRight{
+  display:flex;
+  flex-direction:column;
+  align-items:flex-end;
+  gap:6px;
+}
+
+.rowBtns{
+  margin-top:10px;
+}
+
+.lateCancel{
+  color:#b45309;
+  font-weight: 900;
+}
+
+.prewrap{
+  white-space:pre-wrap;
+  font-size:13px;
+}
+
 .badge{
   font-size:12px;
   font-weight: 900;
@@ -245,8 +277,6 @@ input:focus, select:focus{
 .badge.cancelled{ border-color:#e5e7eb; background:#f9fafb; color:#374151; }
 .badge.late{ border-color:#fed7aa; background:#fff7ed; color:#b45309; }
 
-/* ================= ALERTS ================= */
-
 .alert, .ok{
   display:none;
   margin-top:10px;
@@ -257,8 +287,6 @@ input:focus, select:focus{
 
 .alert{ border:1px solid #fecaca; background:#fff5f5; color:#b91c1c; }
 .ok{ border:1px solid #bbf7d0; background:#f0fdf4; color:#14532d; }
-
-/* ================= MODAL ================= */
 
 .overlay{
   position:fixed;
@@ -280,9 +308,14 @@ input:focus, select:focus{
   box-shadow: var(--shadow);
 }
 
-/* ================= PLANNING (pro) ================= */
+.modalTitle{
+  margin:0 0 10px;
+}
 
-/* Grille du planning : on garde tes IDs/classes, juste style “dashboard” */
+.modalActions{
+  margin-top:12px;
+}
+
 #planningGrid{
   display:grid;
   grid-template-columns: 90px repeat(5, 1fr);
@@ -290,7 +323,6 @@ input:focus, select:focus{
   margin-top:10px;
 }
 
-/* cell heure */
 .timeCell{
   height: 52px;
   border-radius: 14px;
@@ -304,7 +336,6 @@ input:focus, select:focus{
   color: var(--muted);
 }
 
-/* cell slot */
 .slot{
   height: 52px;
   border-radius: 14px;
@@ -318,21 +349,21 @@ input:focus, select:focus{
   background:#fff;
 }
 
-/* états */
+.slot.slotHead{
+  background:#f8fafc;
+  color: var(--text);
+}
+
+.slot.slotEmpty{
+  opacity:.55;
+}
+
 .slot.free{ background:#ecfdf5; border-color:#bbf7d0; color:#14532d; }
 .slot.blocked{ background:#f3f4f6; border-color:#e5e7eb; color:#6b7280; }
 .slot.pending{ background:#fff7ed; border-color:#fed7aa; color:#b45309; }
 .slot.validated{ background:#f0fdf4; border-color:#bbf7d0; color:#14532d; }
 .slot.conflict{ background:#fef3c7; border-color:#f59e0b; color:#92400e; }
 
-/* Header row “jours” que ton JS génère via .slot (style inline),
-   on garde mais on l’harmonise */
-#planningGrid .slot[style*="background:#f8fafc"]{
-  background:#f8fafc !important;
-  color: var(--text);
-}
-
-/* Responsive planning */
 @media (max-width: 980px){
   #planningGrid{
     grid-template-columns: 74px repeat(5, 1fr);

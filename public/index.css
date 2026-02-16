@@ -129,7 +129,7 @@ main{
   border-radius:var(--radius);
   box-shadow:var(--shadow);
   padding:18px;
-  overflow:hidden; /* évite les débordements */
+  overflow:hidden;
 }
 
 h2{
@@ -423,7 +423,6 @@ textarea{
   outline-offset:-2px;
 }
 
-/* Petit badge interne */
 .pillTag{
   display:inline-flex;
   align-items:center;

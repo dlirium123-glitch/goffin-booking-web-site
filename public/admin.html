@@ -5,8 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Admin — Goffin Booking</title>
 
-  <!-- CSS (cache-bust) -->
-  <link rel="stylesheet" href="/admin.css?v=2026-02-15-1" />
+  <link rel="stylesheet" href="/admin.css?v=2026-02-16-2" />
 
   <!-- Firebase (Compat) -->
   <script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -21,7 +20,7 @@
     <div class="brand">
       <h1>Admin — Goffin Booking</h1>
       <p>Gestion des rendez-vous & planning</p>
-      <p class="tiny" style="margin:6px 0 0;opacity:.85;color:#eaf2ff">
+      <p class="tiny versionLine">
         Version : <span id="adminVersion">—</span>
       </p>
     </div>
@@ -31,8 +30,8 @@
         <span class="dot"></span>
         <span id="statusText">Non connecté</span>
       </span>
-      <button class="btnTop" id="btnLogin">Connexion</button>
-      <button class="btnTop secondary" id="btnLogout" style="display:none">Déconnexion</button>
+      <button class="btnTop" id="btnLogin" type="button">Connexion</button>
+      <button class="btnTop secondary" id="btnLogout" type="button" hidden>Déconnexion</button>
     </div>
   </div>
 </header>
@@ -46,7 +45,7 @@
 
       <div class="row">
         <div>
-          <div class="tiny" style="font-weight:900;margin-bottom:6px">Filtre statut</div>
+          <div class="tiny fieldTitle">Filtre statut</div>
           <select id="statusFilter">
             <option value="pending">En attente</option>
             <option value="validated">Validés</option>
@@ -57,12 +56,12 @@
         </div>
 
         <div>
-          <div class="tiny" style="font-weight:900;margin-bottom:6px">Recherche (note / email)</div>
+          <div class="tiny fieldTitle">Recherche (note / email)</div>
           <input id="search" placeholder="Ex: chaudière, adresse, @..." />
         </div>
 
-        <div style="display:flex;align-items:flex-end;gap:10px">
-          <button class="btn primary" id="btnRefresh">Rafraîchir</button>
+        <div class="rowEnd">
+          <button class="btn primary" id="btnRefresh" type="button">Rafraîchir</button>
         </div>
       </div>
 
@@ -70,7 +69,7 @@
       <div id="apptOk" class="ok"></div>
 
       <div id="apptList" class="list"></div>
-      <div id="apptEmpty" class="muted" style="display:none;margin-top:10px">Aucun rendez-vous</div>
+      <div id="apptEmpty" class="muted emptyState" hidden>Aucun rendez-vous</div>
 
       <div class="hr"></div>
 
@@ -79,8 +78,8 @@
         Génère les créneaux visibles côté client (lun→ven, 09:30→17:30, blocs 90 min) sur 8 semaines.
       </p>
       <div class="row">
-        <button class="btn primary" id="btnGenFreeSlots">Générer 8 semaines</button>
-        <button class="btn" id="btnGenPreview">Prévisualiser (console)</button>
+        <button class="btn primary" id="btnGenFreeSlots" type="button">Générer 8 semaines</button>
+        <button class="btn" id="btnGenPreview" type="button">Prévisualiser (console)</button>
       </div>
       <div id="slotsMsg" class="alert"></div>
       <div id="slotsOk" class="ok"></div>
@@ -89,7 +88,7 @@
     <!-- RIGHT -->
     <section class="card">
       <h2>Planning (vue semaine)</h2>
-      <p class="muted">Lecture seule — synchronisé avec Outlook</p>
+      <p class="muted">Lecture seule — reflète l’état des créneaux (free/pending/blocked).</p>
 
       <div id="planningGrid"></div>
 
@@ -100,14 +99,14 @@
 
       <div class="row">
         <div>
-          <div class="tiny" style="font-weight:900;margin-bottom:6px">Filtre</div>
+          <div class="tiny fieldTitle">Filtre</div>
           <select id="modifFilter">
             <option value="new">Nouvelles</option>
             <option value="all">Toutes</option>
           </select>
         </div>
-        <div style="display:flex;align-items:flex-end;gap:10px">
-          <button class="btn primary" id="btnRefreshModifs">Rafraîchir</button>
+        <div class="rowEnd">
+          <button class="btn primary" id="btnRefreshModifs" type="button">Rafraîchir</button>
         </div>
       </div>
 
@@ -115,7 +114,7 @@
       <div id="modifOk" class="ok"></div>
 
       <div id="modifList" class="list"></div>
-      <div id="modifEmpty" class="muted" style="display:none;margin-top:10px">Aucune demande</div>
+      <div id="modifEmpty" class="muted emptyState" hidden>Aucune demande</div>
     </section>
 
   </div>
@@ -123,24 +122,24 @@
 
 <!-- Modal login -->
 <div class="overlay" id="overlay">
-  <div class="modal">
-    <h2 style="margin:0 0 10px">Connexion admin</h2>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+    <h2 id="loginTitle" class="modalTitle">Connexion admin</h2>
 
-    <div class="tiny" style="font-weight:900;margin:10px 0 6px">Adresse e-mail</div>
-    <input id="loginEmail" placeholder="Email" autocomplete="email" />
+    <div class="tiny fieldTitle">Adresse e-mail</div>
+    <input id="loginEmail" type="email" placeholder="Email" autocomplete="email" />
 
-    <div class="tiny" style="font-weight:900;margin:10px 0 6px">Mot de passe</div>
+    <div class="tiny fieldTitle">Mot de passe</div>
     <input id="loginPass" type="password" placeholder="Mot de passe" autocomplete="current-password" />
 
-    <div class="row" style="margin-top:12px">
-      <button class="btn primary" id="doLogin">Se connecter</button>
-      <button class="btn" id="closeLogin">Annuler</button>
+    <div class="row modalActions">
+      <button class="btn primary" id="doLogin" type="button">Se connecter</button>
+      <button class="btn" id="closeLogin" type="button">Annuler</button>
     </div>
 
-    <div id="loginErr" class="alert" style="display:none"></div>
+    <div id="loginErr" class="alert" hidden></div>
   </div>
 </div>
 
-<script defer src="/admin.v3.js?v=admin-2026-02-15-1"></script>
+<script defer src="/admin.v3.js?v=admin-2026-02-16-2"></script>
 </body>
 </html>

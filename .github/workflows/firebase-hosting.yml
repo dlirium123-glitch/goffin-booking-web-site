@@ -2,27 +2,27 @@ name: Deploy to Firebase Hosting
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
+
+concurrency:
+  group: firebase-hosting-main
+  cancel-in-progress: true
 
 jobs:
-  build_and_deploy:
+  deploy:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # Auth Google via service account JSON (secret)
       - name: Google Auth
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
 
       - name: Install Firebase CLI
         run: npm i -g firebase-tools
