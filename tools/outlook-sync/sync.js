@@ -1,264 +1,437 @@
 /* eslint-disable no-console */
-const { Firestore, FieldValue, Timestamp } = require("@google-cloud/firestore")
+
+const { Firestore, Timestamp, FieldValue } = require("@google-cloud/firestore")
 const fetch = require("node-fetch")
 const ical = require("node-ical")
 
-function mustEnv(name) {
-  const v = process.env[name]
-  if (!v) throw new Error(`Missing env: ${name}`)
-  return v
+/**
+ * Outlook → Firestore sync
+ * - Reads OUTLOOK_ICS_URL (secret in GitHub Actions)
+ * - Blocks freeSlots overlapped by Outlook events
+ * - Frees slots previously blocked by outlook when not overlapped anymore
+ * - Never overrides validated slots
+ * - Never overrides pending slots (but can flag conflict)
+ * - Writes syncHealth/outlook for admin banner
+ */
+
+function main() {
+  run().catch(async (error) => {
+    console.error("❌ Fatal error:", error)
+    try {
+      await writeHealth({
+        status: "failed",
+        message: safeErrorMessage(error),
+        details: safeErrorStack(error),
+      })
+    } catch (e) {
+      console.error("❌ Could not write syncHealth:", e)
+    }
+    process.exitCode = 1
+  })
 }
 
-function toMs(d) {
-  return d instanceof Date ? d.getTime() : new Date(d).getTime()
+async function run() {
+  const config = readConfig()
+  const db = new Firestore({ projectId: config.projectId })
+
+  const now = new Date()
+  const rangeStart = new Date(now)
+  const rangeEnd = addDays(now, config.daysForward)
+
+  console.log("🔄 Outlook sync start")
+  console.log("• projectId:", config.projectId)
+  console.log("• daysForward:", config.daysForward)
+  console.log("• range:", rangeStart.toISOString(), "→", rangeEnd.toISOString())
+  console.log("• tz:", config.tz)
+
+  // 1) Fetch + parse ICS
+  const icsText = await fetchIcs({ url: config.icsUrl })
+  const busyIntervals = parseBusyIntervals({
+    icsText,
+    rangeStart,
+    rangeEnd,
+  })
+
+  console.log("• busy intervals:", busyIntervals.length)
+
+  // 2) Load freeSlots in range
+  const freeSlots = await loadFreeSlotsInRange({
+    db,
+    rangeStart,
+    rangeEnd,
+  })
+
+  console.log("• freeSlots loaded:", freeSlots.length)
+
+  // 3) Compute desired updates
+  const plan = buildUpdatePlan({
+    freeSlots,
+    busyIntervals,
+  })
+
+  console.log("• updates:", plan.toWrite.length, "• skipped:", plan.skipped)
+
+  // 4) Commit updates (batch)
+  const { committed } = await commitUpdates({
+    db,
+    toWrite: plan.toWrite,
+  })
+
+  // 5) Write health doc
+  const summary = {
+    status: "ok",
+    message: "Sync completed",
+    updatedAt: FieldValue.serverTimestamp(),
+    counts: {
+      scanned: freeSlots.length,
+      committed,
+      blockedByOutlook: plan.counts.blockedByOutlook,
+      freedFromOutlook: plan.counts.freedFromOutlook,
+      keptPending: plan.counts.keptPending,
+      keptValidated: plan.counts.keptValidated,
+      conflicts: plan.counts.conflicts,
+      unchanged: plan.counts.unchanged,
+    },
+  }
+
+  await db.collection("syncHealth").doc("outlook").set(summary, { merge: true })
+
+  console.log("✅ Done")
+  console.log("• committed:", committed)
+  console.log("• blockedByOutlook:", plan.counts.blockedByOutlook)
+  console.log("• freedFromOutlook:", plan.counts.freedFromOutlook)
+  console.log("• keptValidated:", plan.counts.keptValidated)
+  console.log("• keptPending:", plan.counts.keptPending)
+  console.log("• conflicts:", plan.counts.conflicts)
+  console.log("• unchanged:", plan.counts.unchanged)
 }
 
-function overlaps(aStart, aEnd, bStart, bEnd) {
-  return aStart < bEnd && bStart < aEnd
+/* ----------------------------- CONFIG ----------------------------- */
+
+function readConfig() {
+  const projectId = process.env.FIREBASE_PROJECT_ID || process.env.GCLOUD_PROJECT
+  const icsUrl = process.env.OUTLOOK_ICS_URL
+  const daysForward = toInt(process.env.DAYS_FORWARD, 90)
+  const tz = process.env.TZ || "Europe/Brussels"
+
+  if (!projectId) throw new Error("Missing env: FIREBASE_PROJECT_ID (or GCLOUD_PROJECT)")
+  if (!icsUrl) throw new Error("Missing env: OUTLOOK_ICS_URL")
+
+  return {
+    projectId,
+    icsUrl,
+    daysForward,
+    tz,
+  }
 }
 
-// freeSlots id = YYYYMMDD_HHMM
-function pad2(n) {
-  return String(n).padStart(2, "0")
+function toInt(value, fallback) {
+  const n = Number.parseInt(String(value || ""), 10)
+  if (Number.isFinite(n) && n > 0) return n
+  return fallback
 }
 
-function freeSlotIdFromDate(d) {
-  const yyyy = d.getFullYear()
-  const mm = pad2(d.getMonth() + 1)
-  const dd = pad2(d.getDate())
-  const hh = pad2(d.getHours())
-  const mi = pad2(d.getMinutes())
-  return `${yyyy}${mm}${dd}_${hh}${mi}`
+/* ----------------------------- FETCH ICS ----------------------------- */
+
+async function fetchIcs({ url }) {
+  const res = await fetch(url, { method: "GET" })
+  if (!res.ok) throw new Error(`ICS fetch failed: ${res.status} ${res.statusText}`)
+  const text = await res.text()
+  if (!text || text.length < 50) throw new Error("ICS content looks empty")
+  return text
 }
 
-function addDays(date, days) {
-  const d = new Date(date.getTime())
-  d.setDate(d.getDate() + days)
+/* ----------------------------- PARSE ICS ----------------------------- */
+
+function parseBusyIntervals({ icsText, rangeStart, rangeEnd }) {
+  const parsed = ical.parseICS(icsText)
+  const intervals = []
+
+  for (const key of Object.keys(parsed)) {
+    const item = parsed[key]
+    if (!item) continue
+    if (item.type !== "VEVENT") continue
+
+    const start = toDate(item.start)
+    const end = toDate(item.end)
+
+    if (!start || !end) continue
+    if (end <= start) continue
+
+    // Skip events completely outside the window
+    if (end <= rangeStart) continue
+    if (start >= rangeEnd) continue
+
+    // Clamp within our window
+    const clampedStart = start < rangeStart ? rangeStart : start
+    const clampedEnd = end > rangeEnd ? rangeEnd : end
+
+    intervals.push({
+      start: clampedStart,
+      end: clampedEnd,
+      uid: String(item.uid || key || ""),
+      summary: String(item.summary || ""),
+    })
+  }
+
+  intervals.sort((a, b) => a.start.getTime() - b.start.getTime())
+  return mergeIntervals(intervals)
+}
+
+function toDate(value) {
+  if (!value) return null
+  if (value instanceof Date) return value
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return null
   return d
 }
 
-function safeText(s, max = 220) {
-  const x = String(s || "").replace(/\s+/g, " ").trim()
-  if (x.length <= max) return x
-  return `${x.slice(0, max - 3)}...`
-}
+function mergeIntervals(intervals) {
+  if (!intervals.length) return []
+  const out = []
+  let cur = { ...intervals[0] }
 
-// ========= ICS parsing helpers =========
-function normalizeEventWindow(ev) {
-  // node-ical returns ev.start/ev.end as Date
-  const start = ev.start instanceof Date ? ev.start : null
-  const end = ev.end instanceof Date ? ev.end : null
-  if (!start || !end) return null
-
-  // ignore invalid
-  if (end <= start) return null
-
-  return { start, end, summary: ev.summary || "" }
-}
-
-function isBlockingEvent(ev) {
-  // You can filter here if you want (ex: ignore "Free" events etc)
-  // For now: every VEVENT blocks time.
-  return true
-}
-
-// ========= Firestore sync =========
-async function writeHealth(db, status, payload) {
-  const ref = db.collection("syncHealth").doc("outlook")
-  const base = {
-    status,
-    updatedAt: FieldValue.serverTimestamp(),
-  }
-  await ref.set({ ...base, ...(payload || {}) }, { merge: true })
-}
-
-async function main() {
-  const PROJECT_ID = mustEnv("FIREBASE_PROJECT_ID")
-  const OUTLOOK_ICS_URL = mustEnv("OUTLOOK_ICS_URL")
-  const DAYS_FORWARD = parseInt(process.env.DAYS_FORWARD || "90", 10)
-
-  const db = new Firestore({ projectId: PROJECT_ID })
-  const freeSlotsCol = db.collection("freeSlots")
-
-  const now = new Date()
-  const windowStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
-  const windowEnd = addDays(windowStart, DAYS_FORWARD)
-
-  console.log("Window:", windowStart.toISOString(), "→", windowEnd.toISOString())
-
-  // ---------- Download ICS ----------
-  let icsText = ""
-  try {
-    const res = await fetch(OUTLOOK_ICS_URL, { method: "GET" })
-    if (!res.ok) {
-      await writeHealth(db, "failed", {
-        message: `ICS fetch failed: HTTP ${res.status}`,
-      })
-      throw new Error(`ICS fetch failed: HTTP ${res.status}`)
+  for (let i = 1; i < intervals.length; i++) {
+    const next = intervals[i]
+    if (next.start <= cur.end) {
+      // merge overlap
+      cur.end = next.end > cur.end ? next.end : cur.end
+      continue
     }
-    icsText = await res.text()
-  } catch (e) {
-    await writeHealth(db, "failed", { message: safeText(e.message) })
-    throw e
+    out.push(cur)
+    cur = { ...next }
   }
+  out.push(cur)
+  return out
+}
 
-  if (!icsText || icsText.length < 20) {
-    await writeHealth(db, "aborted", { reason: "empty_ics" })
-    console.warn("ICS seems empty -> aborted")
-    return
-  }
+/* ----------------------------- FIRESTORE LOAD ----------------------------- */
 
-  // ---------- Parse ICS ----------
-  let parsed
-  try {
-    parsed = ical.parseICS(icsText)
-  } catch (e) {
-    await writeHealth(db, "failed", { message: `ICS parse error: ${safeText(e.message)}` })
-    throw e
-  }
+async function loadFreeSlotsInRange({ db, rangeStart, rangeEnd }) {
+  const fromTs = Timestamp.fromDate(rangeStart)
+  const toTs = Timestamp.fromDate(rangeEnd)
 
-  const busy = []
-  for (const k of Object.keys(parsed)) {
-    const ev = parsed[k]
-    if (!ev || ev.type !== "VEVENT") continue
-
-    const norm = normalizeEventWindow(ev)
-    if (!norm) continue
-    if (!isBlockingEvent(ev)) continue
-
-    // Keep only within window (quick pruning)
-    const s = norm.start
-    const e = norm.end
-    if (e <= windowStart) continue
-    if (s >= windowEnd) continue
-
-    busy.push({ start: s, end: e, summary: norm.summary })
-  }
-
-  busy.sort((a, b) => toMs(a.start) - toMs(b.start))
-
-  console.log("Busy events in window:", busy.length)
-
-  // ---------- Load freeSlots in window ----------
-  console.log("Loading freeSlots in window…")
-  const snap = await freeSlotsCol
-    .where("start", ">=", Timestamp.fromDate(windowStart))
-    .where("start", "<", Timestamp.fromDate(windowEnd))
+  const snap = await db
+    .collection("freeSlots")
+    .where("start", ">=", fromTs)
+    .where("start", "<", toTs)
     .get()
 
-  console.log("freeSlots docs loaded:", snap.size)
-
-  // ---------- Decide updates ----------
-  const toBlock = []
-  const toFree = []
-
-  snap.forEach((doc) => {
-    const d = doc.data() || {}
-    const status = String(d.status || "free").toLowerCase()
-    const reason = String(d.blockedReason || "").toLowerCase()
-
-    // We NEVER override validated
-    if (status === "blocked" && reason === "validated") return
-
-    const start = d.start?.toDate ? d.start.toDate() : null
-    const end = d.end?.toDate ? d.end.toDate() : null
-    if (!start || !end) return
-
-    const sMs = toMs(start)
-    const eMs = toMs(end)
-
-    // Determine if overlaps any busy event (simple scan)
-    // Busy list is usually small; this is fine. If huge, we can optimize later.
-    let isOccupied = false
-    for (const ev of busy) {
-      if (toMs(ev.start) >= eMs) break
-      if (overlaps(sMs, eMs, toMs(ev.start), toMs(ev.end))) {
-        isOccupied = true
-        break
-      }
-    }
-
-    if (isOccupied) {
-      // Should be blocked(outlook) unless validated
-      if (!(status === "blocked" && reason === "outlook")) {
-        toBlock.push(doc.id)
-      }
-      return
-    }
-
-    // Not occupied -> if currently blocked by outlook, free it
-    if (status === "blocked" && reason === "outlook") {
-      toFree.push(doc.id)
-    }
-  })
-
-  console.log("Will block:", toBlock.length, "Will free:", toFree.length)
-
-  // ---------- Batch write ----------
-  const batchSize = 400
-  let batch = db.batch()
-  let ops = 0
-  let blockedCount = 0
-  let freedCount = 0
-
-  async function commitIfNeeded() {
-    if (ops >= batchSize) {
-      const b = batch
-      batch = db.batch()
-      ops = 0
-      await b.commit()
-    }
-  }
-
-  for (const id of toBlock) {
-    const ref = freeSlotsCol.doc(id)
-    batch.set(
-      ref,
-      {
-        status: "blocked",
-        blockedReason: "outlook",
-        updatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    )
-    ops++
-    blockedCount++
-    await commitIfNeeded()
-  }
-
-  for (const id of toFree) {
-    const ref = freeSlotsCol.doc(id)
-    batch.set(
-      ref,
-      {
-        status: "free",
-        blockedReason: null,
-        updatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    )
-    ops++
-    freedCount++
-    await commitIfNeeded()
-  }
-
-  if (ops > 0) await batch.commit()
-
-  await writeHealth(db, "ok", {
-    message: `blocked=${blockedCount} freed=${freedCount} events=${busy.length}`,
-  })
-
-  console.log("DONE ✅", { blockedCount, freedCount, events: busy.length })
+  return snap.docs.map((doc) => ({
+    id: doc.id,
+    ref: doc.ref,
+    data: doc.data() || {},
+  }))
 }
 
-main().catch(async (e) => {
-  console.error("SYNC FAILED ❌", e)
-  try {
-    const PROJECT_ID = process.env.FIREBASE_PROJECT_ID
-    if (PROJECT_ID) {
-      const db = new Firestore({ projectId: PROJECT_ID })
-      await writeHealth(db, "failed", { message: safeText(e.message) })
+/* ----------------------------- PLAN UPDATES ----------------------------- */
+
+function buildUpdatePlan({ freeSlots, busyIntervals }) {
+  const BLOCK_REASON = {
+    OUTLOOK: "outlook",
+    VALIDATED: "validated",
+  }
+
+  const counts = {
+    blockedByOutlook: 0,
+    freedFromOutlook: 0,
+    keptPending: 0,
+    keptValidated: 0,
+    conflicts: 0,
+    unchanged: 0,
+  }
+
+  const toWrite = []
+  let skipped = 0
+
+  for (const slot of freeSlots) {
+    const data = slot.data || {}
+
+    const start = toDateFromTs(data.start)
+    const end = toDateFromTs(data.end)
+
+    if (!start || !end) {
+      skipped++
+      continue
     }
-  } catch {}
-  process.exit(1)
-})
+
+    const currentStatus = String(data.status || "free").toLowerCase()
+    const currentReason = String(data.blockedReason || "").toLowerCase()
+
+    const isValidated = currentStatus === "blocked" && currentReason === BLOCK_REASON.VALIDATED
+    if (isValidated) {
+      // Never change validated slots
+      counts.keptValidated++
+      // Ensure conflict is false for validated (clean UI)
+      if (data.conflict === true) {
+        toWrite.push({
+          ref: slot.ref,
+          patch: {
+            conflict: false,
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          reason: "validated-conflict-reset",
+        })
+      } else {
+        counts.unchanged++
+      }
+      continue
+    }
+
+    const isPending = currentStatus === "pending"
+
+    const isBusy = overlapsAny({ start, end, intervals: busyIntervals })
+
+    // Desired state for non-protected slots
+    const desired = isBusy
+      ? { status: "blocked", blockedReason: BLOCK_REASON.OUTLOOK }
+      : { status: "free", blockedReason: null }
+
+    // Pending is protected: do not change status, but flag conflict if Outlook overlaps
+    if (isPending) {
+      counts.keptPending++
+
+      const shouldConflict = isBusy
+      if (shouldConflict) counts.conflicts++
+
+      const needsWrite = (data.conflict === true) !== shouldConflict
+      if (!needsWrite) {
+        counts.unchanged++
+        continue
+      }
+
+      toWrite.push({
+        ref: slot.ref,
+        patch: {
+          conflict: shouldConflict,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        reason: "pending-conflict",
+      })
+      continue
+    }
+
+    // Normal slots: we enforce desired state AND we RESET conflict every run
+    const nextConflict = false
+
+    const willChangeStatus = currentStatus !== desired.status
+    const willChangeReason = String(currentReason || "") !== String(desired.blockedReason || "")
+    const willChangeConflict = (data.conflict === true) !== nextConflict
+
+    if (!willChangeStatus && !willChangeReason && !willChangeConflict) {
+      counts.unchanged++
+      continue
+    }
+
+    if (desired.status === "blocked" && desired.blockedReason === BLOCK_REASON.OUTLOOK) counts.blockedByOutlook++
+    if (currentStatus === "blocked" && currentReason === BLOCK_REASON.OUTLOOK && !isBusy) counts.freedFromOutlook++
+
+    toWrite.push({
+      ref: slot.ref,
+      patch: {
+        status: desired.status,
+        blockedReason: desired.blockedReason,
+        conflict: nextConflict,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      reason: "enforce-desired",
+    })
+  }
+
+  return { toWrite, skipped, counts }
+}
+
+function toDateFromTs(ts) {
+  try {
+    if (!ts) return null
+    if (typeof ts.toDate === "function") return ts.toDate()
+    return toDate(ts)
+  } catch {
+    return null
+  }
+}
+
+/* ----------------------------- OVERLAP CHECK ----------------------------- */
+
+function overlapsAny({ start, end, intervals }) {
+  // intervals are sorted and merged; we can early-break
+  const startMs = start.getTime()
+  const endMs = end.getTime()
+
+  for (const it of intervals) {
+    const itStart = it.start.getTime()
+    const itEnd = it.end.getTime()
+
+    if (itStart >= endMs) return false // no further overlaps
+    if (itEnd <= startMs) continue
+    return true
+  }
+
+  return false
+}
+
+/* ----------------------------- COMMIT ----------------------------- */
+
+async function commitUpdates({ db, toWrite }) {
+  if (!toWrite.length) return { committed: 0 }
+
+  const MAX_BATCH = 450
+  let committed = 0
+
+  for (let i = 0; i < toWrite.length; i += MAX_BATCH) {
+    const chunk = toWrite.slice(i, i + MAX_BATCH)
+    const batch = db.batch()
+
+    for (const item of chunk) batch.set(item.ref, item.patch, { merge: true })
+
+    await batch.commit()
+    committed += chunk.length
+
+    console.log("• batch committed:", chunk.length, "• total:", committed)
+  }
+
+  return { committed }
+}
+
+/* ----------------------------- HEALTH HELPERS ----------------------------- */
+
+async function writeHealth({ status, message, details }) {
+  const projectId = process.env.FIREBASE_PROJECT_ID || process.env.GCLOUD_PROJECT
+  if (!projectId) return
+
+  const db = new Firestore({ projectId })
+
+  const payload = {
+    status,
+    message: String(message || ""),
+    details: String(details || ""),
+    updatedAt: FieldValue.serverTimestamp(),
+  }
+
+  await db.collection("syncHealth").doc("outlook").set(payload, { merge: true })
+}
+
+function safeErrorMessage(error) {
+  try {
+    if (!error) return "Unknown error"
+    return String(error.message || error)
+  } catch {
+    return "Unknown error"
+  }
+}
+
+function safeErrorStack(error) {
+  try {
+    return String(error && error.stack ? error.stack : "")
+  } catch {
+    return ""
+  }
+}
+
+/* ----------------------------- DATE HELPERS ----------------------------- */
+
+function addDays(date, days) {
+  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000)
+}
+
+main()
