@@ -11,6 +11,7 @@ concurrency:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   deploy:
@@ -35,6 +36,10 @@ jobs:
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+
+      # (Optionnel) Vérif rapide que firebase.json existe
+      # - name: Sanity check
+      #   run: test -f firebase.json
 
       - name: Deploy to Firebase Hosting
         run: firebase deploy --only hosting --project goffin-booking-web
