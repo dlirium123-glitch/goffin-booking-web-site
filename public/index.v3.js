@@ -1,12 +1,13 @@
 // =======================================================
-// Goffin Booking — index.v3.js (STEP 2 PRO)
-// - Profil client: société + BCE + tel + adresse siège (obligatoire)
-// - Adresse chantier UNIQUEMENT lors de la demande de RDV
-// - Formulaire intelligent RDV (multi-techniques, région, pression, nb appareils, kW, chaufferie, photos/lien)
-// - Fix rules: le client ne modifie sur freeSlots QUE status + updatedAt (PAS blockedReason)
-// - Badge <48h clair
+// Goffin Booking — index.v3.js (Client)
+// Version: v3-2026-02-16-client-ui-clean
+// Objectifs:
+// - UI calendrier "pro" côté client : Libre / Indisponible / Sélection
+// - Cache les raisons (Outlook / <48h / validated / booking)
+// - FIX RULES: client update freeSlots = uniquement status + updatedAt
+// - Ajoute "Mes rendez-vous" (liste) + marque visuelle dans la grille
 // =======================================================
-const INDEX_VERSION = "v3-2026-02-15-step2-pro";
+const INDEX_VERSION = "v3-2026-02-16-client-ui-clean";
 console.log("index.v3.js chargé ✅", INDEX_VERSION);
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -23,13 +24,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // ---------- CONFIG ----------
   const CFG = {
-    daysToShow: 5, // Lun -> Ven
-    startMinutes: 9 * 60 + 30, // 09:30
-    endMinutes: 17 * 60 + 30, // 17:30
-    slotMinutes: 90, // 60 + 30 trajet
+    daysToShow: 5,                 // Lun -> Ven
+    startMinutes: 9 * 60 + 30,     // 09:30
+    endMinutes: 17 * 60 + 30,      // 17:30
+    slotMinutes: 90,               // 60 + 30 trajet
     appointmentMinutes: 60,
-    weeksToShowLabel: "Semaine",
-    minHoursBefore: 48,
+    minHoursBeforeBooking: 48,
   };
 
   // ---------- Helpers ----------
@@ -93,7 +93,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   function startOfWeekMonday(d) {
     const x = startOfDay(d);
     const day = x.getDay(); // 0=Sun..6=Sat
-    const diff = day === 0 ? -6 : 1 - day;
+    const diff = (day === 0 ? -6 : 1 - day);
     x.setDate(x.getDate() + diff);
     return x;
   }
@@ -136,15 +136,27 @@ document.addEventListener("DOMContentLoaded", async () => {
     return msg.includes("ERR_BLOCKED_BY_CLIENT") || msg.includes("blocked by client");
   }
 
-  function min48Date() {
-    return new Date(Date.now() + CFG.minHoursBefore * 60 * 60 * 1000);
+  function makeWeekDays(weekStart) {
+    return Array.from({ length: CFG.daysToShow }, (_, i) => addDays(weekStart, i));
+  }
+
+  function keyFromDate(d) {
+    return `${dateKey(d)}_${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}`;
+  }
+
+  function humanStatusFr(st) {
+    const s = String(st || "pending").toLowerCase();
+    if (s === "validated") return "Validé";
+    if (s === "refused") return "Refusé";
+    if (s === "cancelled") return "Annulé";
+    return "En attente";
   }
 
   // ---------- UI: Auth ----------
   function showPanel(panelId) {
     ["panelLogin", "panelSignup"].forEach((id) => {
       const el = document.getElementById(id);
-      if (el) el.style.display = id === panelId ? "block" : "none";
+      if (el) el.style.display = (id === panelId) ? "block" : "none";
     });
     hideBanner();
   }
@@ -191,7 +203,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         </p>
 
         <label class="label">Adresse e-mail</label>
-        <input id="signupEmail" type="email" placeholder="ex: test01@check.be" autocomplete="email"/>
+        <input id="signupEmail" type="email" placeholder="ex: contact@votre-societe.be" autocomplete="email"/>
 
         <label class="label">Mot de passe</label>
         <input id="signupPass" type="password" placeholder="minimum 6 caractères" autocomplete="new-password"/>
@@ -328,13 +340,11 @@ document.addEventListener("DOMContentLoaded", async () => {
       </div>
       <div class="ok" style="display:block">Compte administrateur détecté ✅ Redirection vers le panneau admin…</div>
     `;
-    setTimeout(() => {
-      window.location.href = "/admin";
-    }, 250);
+    setTimeout(() => { window.location.href = "/admin"; }, 250);
     return true;
   }
 
-  // ---------- UI: Profile (SANS adresse chantier) ----------
+  // ---------- UI: Profile ----------
   function renderProfileForm(userEmail) {
     right.innerHTML = `
       <div class="stepWrap">
@@ -345,25 +355,23 @@ document.addEventListener("DOMContentLoaded", async () => {
       <p class="muted">Complétez vos informations société (1 minute).</p>
 
       <label class="label">Société</label>
-      <input id="p_company" placeholder="Nom de la société" />
+      <input id="p_company" placeholder="Nom de la société"/>
 
       <div class="row">
         <div>
           <label class="label">N° d’entreprise (BCE)</label>
-          <input id="p_vat" placeholder="ex: BE0123456789" />
+          <input id="p_vat" placeholder="ex: BE0123456789"/>
         </div>
         <div>
           <label class="label">Téléphone</label>
-          <input id="p_phone" placeholder="ex: +32 ..." />
+          <input id="p_phone" placeholder="ex: +32 ..."/>
         </div>
       </div>
 
       <label class="label">Adresse du siège social (obligatoire)</label>
       <textarea id="p_hq" placeholder="Rue, n°, code postal, ville"></textarea>
 
-      <button id="btnSaveProfile" class="btn primary" style="margin-top:12px" type="button">
-        Enregistrer mon profil
-      </button>
+      <button id="btnSaveProfile" class="btn primary" style="margin-top:12px" type="button">Enregistrer mon profil</button>
 
       <div id="uiBanner" class="alert" style="display:none"></div>
     `;
@@ -378,7 +386,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     return errors;
   }
 
-  // ---------- UI: Booking shell + Formulaire intelligent ----------
+  // ---------- UI: Booking ----------
   function renderBookingShell(userEmail) {
     right.innerHTML = `
       <div class="stepWrap">
@@ -388,26 +396,26 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       <div class="callout green">
         <strong>Profil OK ✅</strong>
-        <div class="muted">Choisissez un créneau disponible (semaine uniquement).</div>
+        <div class="muted">Choisissez un créneau disponible. (Les disponibilités internes ne sont pas détaillées.)</div>
       </div>
 
       <div class="calHeader">
         <div>
-          <div class="calTitle" id="calTitle">${CFG.weeksToShowLabel}</div>
+          <div class="calTitle" id="calTitle">Semaine</div>
           <div class="tiny" id="calSub">Chargement…</div>
         </div>
         <div class="calNav">
-          <button class="calBtn" id="calPrev" type="button">◀</button>
+          <button class="calBtn" id="calPrev" type="button" aria-label="Semaine précédente">◀</button>
           <button class="calBtn" id="calToday" type="button">Aujourd’hui</button>
-          <button class="calBtn" id="calNext" type="button">▶</button>
+          <button class="calBtn" id="calNext" type="button" aria-label="Semaine suivante">▶</button>
         </div>
       </div>
 
       <div class="calLegend">
         <span class="dotKey"><span class="kdot kfree"></span> libre</span>
         <span class="dotKey"><span class="kdot kblocked"></span> indisponible</span>
-        <span class="dotKey"><span class="kdot ksoon"></span> &lt;48h</span>
         <span class="dotKey"><span class="kdot kselected"></span> sélection</span>
+        <span class="dotKey"><span class="kdot kmine"></span> mes RDV</span>
       </div>
 
       <div class="calGrid" id="calGrid"></div>
@@ -416,93 +424,22 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       <h3 style="margin:0 0 8px">Informations de la demande</h3>
 
-      <label class="label">Adresse du chantier (obligatoire)</label>
-      <textarea id="apptAddress" placeholder="Rue, n°, code postal, ville"></textarea>
-
-      <div class="row">
-        <div>
-          <label class="label">Région</label>
-          <select id="apptRegion">
-            <option value="">—</option>
-            <option value="Bruxelles">Bruxelles</option>
-            <option value="Wallonie">Wallonie</option>
-            <option value="Flandre">Flandre</option>
-          </select>
-        </div>
-
-        <div>
-          <label class="label">Chaufferie ?</label>
-          <select id="apptChaufferie">
-            <option value="">—</option>
-            <option value="oui">Oui</option>
-            <option value="non">Non</option>
-          </select>
-        </div>
-      </div>
-
-      <label class="label">Type(s) de contrôle (au moins 1)</label>
-      <div class="chipGrid" id="apptTechniques">
-        <label class="chip"><input type="checkbox" value="Conformité gaz" /> Conformité gaz</label>
-        <label class="chip"><input type="checkbox" value="Réception chaudière" /> Réception chaudière</label>
-        <label class="chip"><input type="checkbox" value="Étanchéité (gaz)" /> Étanchéité (gaz)</label>
-        <label class="chip"><input type="checkbox" value="Combustion / analyse" /> Combustion / analyse</label>
-        <label class="chip"><input type="checkbox" value="Autre" /> Autre</label>
-      </div>
-
-      <label class="label">Autre (si coché)</label>
-      <input id="apptOther" placeholder="Ex: contrôle spécifique, réception après travaux, ..." />
-
-      <div class="row">
-        <div>
-          <label class="label">Pression (optionnel)</label>
-          <select id="apptPressure">
-            <option value="">—</option>
-            <option value="21 mbar">21 mbar</option>
-            <option value="100 mbar">100 mbar</option>
-            <option value=">100 mbar">&gt; 100 mbar</option>
-          </select>
-          <div class="tiny">Info utile, non bloquant.</div>
-        </div>
-
-        <div>
-          <label class="label">Nombre d’appareils (optionnel)</label>
-          <input id="apptAppliances" type="number" min="0" step="1" placeholder="ex: 2" />
-        </div>
-      </div>
-
-      <div class="row">
-        <div>
-          <label class="label">Puissance totale estimée (kW) (optionnel)</label>
-          <input id="apptPowerKw" type="number" min="0" step="0.1" placeholder="ex: 35" />
-        </div>
-        <div>
-          <label class="label">Photos disponibles ?</label>
-          <select id="apptPhotos">
-            <option value="">—</option>
-            <option value="oui">Oui</option>
-            <option value="non">Non</option>
-          </select>
-          <div class="tiny">Pour rester 100% Spark, on met un lien si besoin.</div>
-        </div>
-      </div>
-
-      <label class="label">Lien photos (OneDrive / Google Drive) (optionnel)</label>
-      <input id="apptPhotosLink" placeholder="https://..." />
+      <label class="label">Adresse du contrôle (obligatoire)</label>
+      <textarea id="jobAddress" placeholder="Rue, n°, code postal, ville"></textarea>
 
       <label class="label">Note (optionnel)</label>
-      <textarea id="apptNote" placeholder="Détails utiles (accès, contact sur place, contraintes, etc.)"></textarea>
+      <textarea id="apptNote" placeholder="Détails utiles (type de contrôle, accès, etc.)"></textarea>
 
-      <button id="btnBook" class="btn primary" type="button" disabled>Envoyer la demande (réservation)</button>
+      <button id="btnBook" class="btn primary" type="button" disabled>Envoyer la demande</button>
 
       <div id="uiBanner" class="alert" style="display:none"></div>
 
       <div class="divider"></div>
-      <h3 style="margin:0 0 8px">Mes demandes</h3>
+      <h3 style="margin:0 0 8px">Mes rendez-vous</h3>
       <div class="apptList" id="apptList"></div>
     `;
   }
 
-  // ---------- Calendar rendering ----------
   function renderCalendarGrid(days, timeRows, slotStateByKey) {
     const grid = document.getElementById("calGrid");
     if (!grid) return;
@@ -514,42 +451,40 @@ document.addEventListener("DOMContentLoaded", async () => {
       </div>
     `;
 
-    const rowsHtml = timeRows
-      .map((mins) => {
-        const timeCell = `<div class="calCell timeCell">${escapeHtml(mmToHHMM(mins))}</div>`;
-        const dayCells = days
-          .map((d) => {
-            const slotStart = new Date(d);
-            slotStart.setHours(0, 0, 0, 0);
-            slotStart.setMinutes(mins);
+    const rowsHtml = timeRows.map((mins) => {
+      const timeCell = `<div class="calCell timeCell">${escapeHtml(mmToHHMM(mins))}</div>`;
+      const dayCells = days.map((d) => {
+        const slotStart = new Date(d);
+        slotStart.setHours(0, 0, 0, 0);
+        slotStart.setMinutes(mins);
 
-            const key = `${dateKey(slotStart)}_${String(slotStart.getHours()).padStart(2, "0")}${String(slotStart.getMinutes()).padStart(2, "0")}`;
-            const st = slotStateByKey.get(key) || { status: "blocked", disabled: true, title: "Indisponible" };
+        const key = keyFromDate(slotStart);
+        const st = slotStateByKey.get(key) || { status: "blocked", disabled: true, title: "Indisponible", mine: false };
 
-            const classes = ["calCell", "slot"];
-            if (st.status === "free") classes.push("free");
-            if (st.status === "blocked") classes.push("blocked");
-            if (st.status === "soon") classes.push("soon");
-            if (st.status === "selected") classes.push("selected");
-            if (st.disabled) classes.push("disabled");
+        const classes = ["calCell", "slot"];
+        if (st.status === "free") classes.push("free");
+        if (st.status === "blocked") classes.push("blocked");
+        if (st.status === "selected") classes.push("selected");
+        if (st.disabled) classes.push("disabled");
+        if (st.mine) classes.push("mine");
 
-            return `
-              <div class="${classes.join(" ")}" data-slotkey="${escapeHtml(key)}" title="${escapeHtml(st.title || "")}">
-                ${st.label || ""}
-              </div>
-            `;
-          })
-          .join("");
+        // label: on reste très clean
+        let label = "";
+        if (st.mine) label = `<span class="miniTag mine">Mon RDV</span>`;
+        else if (st.status === "free") label = `<span class="miniTag free">Libre</span>`;
+        // blocked => rien (ou très léger)
 
-        return `<div class="calRow">${timeCell}${dayCells}</div>`;
-      })
-      .join("");
+        return `
+          <div class="${classes.join(" ")}" data-slotkey="${escapeHtml(key)}" title="${escapeHtml(st.title || "")}">
+            ${label}
+          </div>
+        `;
+      }).join("");
+
+      return `<div class="calRow">${timeCell}${dayCells}</div>`;
+    }).join("");
 
     grid.innerHTML = headRow + rowsHtml;
-  }
-
-  function makeWeekDays(weekStart) {
-    return Array.from({ length: CFG.daysToShow }, (_, i) => addDays(weekStart, i));
   }
 
   // ---------- Firestore ops ----------
@@ -558,21 +493,28 @@ document.addEventListener("DOMContentLoaded", async () => {
     const tsStart = firebase.firestore.Timestamp.fromDate(weekStart);
     const tsEnd = firebase.firestore.Timestamp.fromDate(weekEnd);
 
-    const snap = await db.collection("freeSlots").where("start", ">=", tsStart).where("start", "<", tsEnd).get();
+    const snap = await db.collection("freeSlots")
+      .where("start", ">=", tsStart)
+      .where("start", "<", tsEnd)
+      .get();
 
     const map = new Map();
     snap.forEach((doc) => {
       const d = doc.data();
       const start = d.start?.toDate?.() ? d.start.toDate() : null;
       if (!start) return;
-      const key = `${dateKey(start)}_${String(start.getHours()).padStart(2, "0")}${String(start.getMinutes()).padStart(2, "0")}`;
-      map.set(key, { id: doc.id, ...d });
+      map.set(keyFromDate(start), { id: doc.id, ...d });
     });
     return map;
   }
 
   async function fetchMyAppointments(db, uid) {
-    const snap = await db.collection("appointments").where("uid", "==", uid).orderBy("start", "desc").limit(10).get();
+    const snap = await db.collection("appointments")
+      .where("uid", "==", uid)
+      .orderBy("start", "desc")
+      .limit(15)
+      .get();
+
     const items = [];
     snap.forEach((doc) => items.push({ id: doc.id, ...doc.data() }));
     return items;
@@ -587,75 +529,38 @@ document.addEventListener("DOMContentLoaded", async () => {
       return;
     }
 
-    el.innerHTML = list
-      .map((a) => {
-        const st = a.status || "pending";
-        const badgeClass =
-          st === "pending"
-            ? "pending"
-            : st === "validated"
-              ? "validated"
-              : st === "refused"
-                ? "refused"
-                : st === "cancelled"
-                  ? "cancelled"
-                  : "";
+    el.innerHTML = list.map((a) => {
+      const st = String(a.status || "pending").toLowerCase();
+      const badgeClass =
+        st === "pending" ? "pending" :
+        st === "validated" ? "validated" :
+        st === "refused" ? "refused" :
+        st === "cancelled" ? "cancelled" : "pending";
 
-        const start = a.start?.toDate?.() ? a.start.toDate() : null;
-        const when = start
-          ? `${dayLabel(start)} • ${String(start.getHours()).padStart(2, "0")}:${String(start.getMinutes()).padStart(2, "0")}`
-          : "(date inconnue)";
+      const start = a.start?.toDate?.() ? a.start.toDate() : null;
+      const when = start
+        ? `${dayLabel(start)} • ${String(start.getHours()).padStart(2, "0")}:${String(start.getMinutes()).padStart(2, "0")}`
+        : "(date inconnue)";
 
-        const adr = a.appointmentAddress ? `<div class="tiny"><b>Adresse:</b> ${escapeHtml(a.appointmentAddress)}</div>` : "";
-        const tech = Array.isArray(a.techniques) && a.techniques.length
-          ? `<div class="tiny"><b>Contrôles:</b> ${escapeHtml(a.techniques.join(" + "))}</div>`
-          : "";
+      const addr = escapeHtml(a.jobAddress || a.address || "");
+      const note = escapeHtml(a.note || "");
 
-        return `
-          <div class="apptCard">
-            <div class="apptTop">
-              <div>
-                <div style="font-weight:900">${escapeHtml(when)}</div>
-                ${adr}
-                ${tech}
-                <div class="muted" style="margin-top:4px">${escapeHtml(a.note || "")}</div>
-              </div>
-              <div class="badge ${badgeClass}">${escapeHtml(st)}</div>
+      return `
+        <div class="apptCard">
+          <div class="apptTop">
+            <div>
+              <div style="font-weight:900">${escapeHtml(when)}</div>
+              ${addr ? `<div class="tiny" style="margin-top:4px">📍 ${addr}</div>` : ``}
+              ${note ? `<div class="muted" style="margin-top:4px">${note}</div>` : ``}
             </div>
+            <div class="badge ${badgeClass}">${escapeHtml(humanStatusFr(st))}</div>
           </div>
-        `;
-      })
-      .join("");
+        </div>
+      `;
+    }).join("");
   }
 
-  function getSelectedTechniques() {
-    const wrap = document.getElementById("apptTechniques");
-    if (!wrap) return [];
-    const boxes = wrap.querySelectorAll("input[type=checkbox]");
-    const arr = [];
-    boxes.forEach((b) => {
-      if (b.checked) arr.push(String(b.value || "").trim());
-    });
-    return arr.filter(Boolean);
-  }
-
-  function validateBookingForm() {
-    const address = (document.getElementById("apptAddress")?.value || "").trim();
-    const techniques = getSelectedTechniques();
-
-    if (!address || address.length < 8) return "Veuillez indiquer l’adresse du chantier.";
-    if (!techniques.length) return "Veuillez sélectionner au moins 1 type de contrôle.";
-
-    // Si "Autre" coché, on exige un petit texte
-    if (techniques.includes("Autre")) {
-      const other = (document.getElementById("apptOther")?.value || "").trim();
-      if (other.length < 3) return "Vous avez coché “Autre” : veuillez préciser.";
-    }
-
-    return "";
-  }
-
-  // ✅ IMPORTANT: freeSlots update côté client = ONLY status + updatedAt (rules)
+  // IMPORTANT: respect rules freeSlots update = status + updatedAt seulement (client)
   async function bookSlot(db, user, selected, payload) {
     const apptRef = db.collection("appointments").doc();
     const lockRef = db.collection("slots").doc();
@@ -666,19 +571,20 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     await db.runTransaction(async (tx) => {
       const freeSnap = await tx.get(freeRef);
-      if (!freeSnap.exists) throw new Error("Créneau introuvable (freeSlots).");
+      if (!freeSnap.exists) throw new Error("Créneau introuvable.");
 
       const freeData = freeSnap.data() || {};
       if (String(freeData.status || "").toLowerCase() !== "free") {
         throw new Error("Ce créneau n’est plus disponible.");
       }
 
-      // ✅ rules: client ne peut changer QUE status + updatedAt
+      // ✅ client autorisé: uniquement status + updatedAt
       tx.update(freeRef, {
         status: "blocked",
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
 
+      // appointment: champs libres en plus (rules check seulement uid/start/end/status)
       tx.set(apptRef, {
         uid: user.uid,
         email: (user.email || "").toLowerCase(),
@@ -687,20 +593,12 @@ document.addEventListener("DOMContentLoaded", async () => {
         status: "pending",
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
 
-        // --- contenu "métier" ---
-        appointmentAddress: payload.appointmentAddress || "",
-        region: payload.region || "",
-        chaufferie: payload.chaufferie || "",
-        techniques: payload.techniques || [],
-        other: payload.other || "",
-        pressure: payload.pressure || "",
-        appliances: payload.appliances ?? null,
-        powerKw: payload.powerKw ?? null,
-        photosAvailable: payload.photosAvailable || "",
-        photosLink: payload.photosLink || "",
+        // payload "métier"
+        jobAddress: payload.jobAddress || "",
         note: payload.note || "",
       });
 
+      // private lock
       tx.set(lockRef, {
         uid: user.uid,
         start: startTs,
@@ -731,9 +629,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const auth = firebase.auth();
   const db = firebase.firestore();
 
-  try {
-    await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
-  } catch {}
+  try { await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); } catch {}
 
   btnLogout.addEventListener("click", async () => {
     await auth.signOut();
@@ -746,10 +642,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   let selectedSlot = null; // { key, startDate, endDate, freeSlotDocId }
   let lastFreeSlotsMap = new Map();
 
-  function makeTag(label, cls) {
-    return `<span class="miniTag ${cls}">${escapeHtml(label)}</span>`;
-  }
-
   async function refreshCalendarAndAppointments(user) {
     const timeRows = buildTimeRows();
     const days = makeWeekDays(currentWeekStart);
@@ -759,17 +651,32 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (calTitle) calTitle.textContent = `Semaine du ${days[0].toLocaleDateString("fr-BE")}`;
     if (calSub) calSub.textContent = `Créneaux: ${CFG.slotMinutes} min (RDV ${CFG.appointmentMinutes} + trajet)`;
 
+    // --- load my appointments (for marking) ---
+    let myAppts = [];
+    try {
+      myAppts = await fetchMyAppointments(db, user.uid);
+    } catch (e) {
+      console.error(e);
+    }
+    const myKeys = new Set();
+    myAppts.forEach((a) => {
+      const s = a.start?.toDate?.() ? a.start.toDate() : null;
+      if (!s) return;
+      myKeys.add(keyFromDate(s));
+    });
+
     // --- freeSlots only ---
     try {
       lastFreeSlotsMap = await fetchFreeSlotsForWeek(db, currentWeekStart);
     } catch (e) {
       console.error(e);
-      if (!isProbablyAdblockNetworkError(e)) showBanner("alert", "Impossible de charger les créneaux (réseau / rules).");
+      if (!isProbablyAdblockNetworkError(e)) showBanner("alert", "Impossible de charger les disponibilités (réseau / rules).");
       lastFreeSlotsMap = new Map();
     }
 
     const slotStateByKey = new Map();
-    const min48 = min48Date();
+    const now = new Date();
+    const minMs = now.getTime() + CFG.minHoursBeforeBooking * 60 * 60 * 1000;
 
     for (const day of days) {
       for (const mins of timeRows) {
@@ -777,66 +684,53 @@ document.addEventListener("DOMContentLoaded", async () => {
         start.setHours(0, 0, 0, 0);
         start.setMinutes(mins);
 
-        const key = `${dateKey(start)}_${String(start.getHours()).padStart(2, "0")}${String(start.getMinutes()).padStart(2, "0")}`;
+        const key = keyFromDate(start);
+
         const freeDoc = lastFreeSlotsMap.get(key);
 
-        // defaults
+        // Clean defaults
         let status = "blocked";
         let disabled = true;
         let title = "Indisponible";
-        let label = "";
+        const mine = myKeys.has(key);
 
-        if (!freeDoc) {
+        // Rule <48h: always disabled, but we don't display why
+        const underMin = start.getTime() < minMs;
+
+        if (mine) {
+          // my appointment: mark and disable
           status = "blocked";
           disabled = true;
-          title = "Non généré";
+          title = "Vous avez déjà un rendez-vous sur ce créneau.";
+        } else if (!freeDoc) {
+          status = "blocked";
+          disabled = true;
+          title = "Indisponible";
         } else {
           const st = String(freeDoc.status || "blocked").toLowerCase();
-          const br = String(freeDoc.blockedReason || "").toLowerCase();
-
-          if (st === "free") {
+          if (st === "free" && !underMin) {
             status = "free";
             disabled = false;
             title = "Disponible";
           } else {
             status = "blocked";
             disabled = true;
-
-            if (br === "outlook") {
-              title = "Indisponible (Outlook)";
-              label = makeTag("Outlook", "outlook");
-            } else if (br === "validated") {
-              title = "Indisponible (déjà validé)";
-              label = makeTag("Validé", "validated");
-            } else if (br) {
-              title = `Indisponible (${br})`;
-            } else {
-              title = "Indisponible";
-            }
-          }
-
-          // règle <48h (prioritaire visuellement)
-          if (start < min48) {
-            status = "soon";
-            disabled = true;
-            title = "Indisponible (<48h)";
-            label = makeTag("<48h", "soon");
+            title = "Indisponible";
           }
         }
 
-        // sélection
+        // Selected slot
         if (selectedSlot && selectedSlot.key === key) {
-          if (!freeDoc || String(freeDoc.status || "").toLowerCase() !== "free" || start < min48) {
+          if (!freeDoc || String(freeDoc.status || "").toLowerCase() !== "free" || underMin || mine) {
             selectedSlot = null;
           } else {
             status = "selected";
             disabled = false;
             title = "Sélectionné";
-            label = "";
           }
         }
 
-        slotStateByKey.set(key, { status, disabled, title, label });
+        slotStateByKey.set(key, { status, disabled, title, mine });
       }
     }
 
@@ -861,15 +755,17 @@ document.addEventListener("DOMContentLoaded", async () => {
         const freeDoc = lastFreeSlotsMap.get(key);
         if (!freeDoc || String(freeDoc.status || "").toLowerCase() !== "free") return;
 
+        // parse key
         const [dPart, hm] = key.split("_");
         const [yy, mo, dd] = dPart.split("-").map((x) => parseInt(x, 10));
         const hh = parseInt(hm.slice(0, 2), 10);
         const mm = parseInt(hm.slice(2, 4), 10);
-        const start = new Date(yy, mo - 1, dd, hh, mm, 0, 0);
+        const start = new Date(yy, (mo - 1), dd, hh, mm, 0, 0);
 
-        // règle <48h
-        if (start < min48Date()) {
-          showBanner("warn", "Ce créneau est à moins de 48h : réservation impossible.");
+        // <48h rule (hidden in UI but enforced)
+        const minNow = Date.now() + CFG.minHoursBeforeBooking * 60 * 60 * 1000;
+        if (start.getTime() < minNow) {
+          showBanner("warn", "Ce créneau est trop proche : réservation impossible.");
           return;
         }
 
@@ -882,12 +778,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       });
     });
 
-    try {
-      const list = await fetchMyAppointments(db, user.uid);
-      renderAppointments(list);
-    } catch (e) {
-      console.error(e);
-    }
+    renderAppointments(myAppts);
   }
 
   async function bindCalendarNav(user) {
@@ -919,48 +810,28 @@ document.addEventListener("DOMContentLoaded", async () => {
   async function bindBookButton(user) {
     document.getElementById("btnBook")?.addEventListener("click", async () => {
       hideBanner();
-
       const btnBook = document.getElementById("btnBook");
+
       if (!selectedSlot) {
         showBanner("alert", "Veuillez sélectionner un créneau.");
         return;
       }
 
-      const err = validateBookingForm();
-      if (err) {
-        showBanner("alert", err);
+      const jobAddress = (document.getElementById("jobAddress")?.value || "").trim();
+      if (jobAddress.length < 8) {
+        showBanner("alert", "Veuillez indiquer l’adresse du contrôle.");
         return;
       }
 
       try {
         if (btnBook) btnBook.disabled = true;
 
-        const techniques = getSelectedTechniques();
-        const payload = {
-          appointmentAddress: (document.getElementById("apptAddress")?.value || "").trim(),
-          region: (document.getElementById("apptRegion")?.value || "").trim(),
-          chaufferie: (document.getElementById("apptChaufferie")?.value || "").trim(),
-          techniques,
-          other: (document.getElementById("apptOther")?.value || "").trim(),
-          pressure: (document.getElementById("apptPressure")?.value || "").trim(),
-          appliances: (() => {
-            const v = (document.getElementById("apptAppliances")?.value || "").trim();
-            if (!v) return null;
-            const n = parseInt(v, 10);
-            return Number.isFinite(n) ? n : null;
-          })(),
-          powerKw: (() => {
-            const v = (document.getElementById("apptPowerKw")?.value || "").trim();
-            if (!v) return null;
-            const n = parseFloat(v);
-            return Number.isFinite(n) ? n : null;
-          })(),
-          photosAvailable: (document.getElementById("apptPhotos")?.value || "").trim(),
-          photosLink: (document.getElementById("apptPhotosLink")?.value || "").trim(),
-          note: (document.getElementById("apptNote")?.value || "").trim(),
-        };
+        const note = (document.getElementById("apptNote")?.value || "").trim();
 
-        await bookSlot(db, user, selectedSlot, payload);
+        await bookSlot(db, user, selectedSlot, {
+          jobAddress,
+          note,
+        });
 
         showBanner("ok", "Demande envoyée ✅ (en attente de validation)");
         selectedSlot = null;
@@ -969,7 +840,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       } catch (e) {
         console.error(e);
         if (isProbablyAdblockNetworkError(e)) {
-          showBanner("warn", "Une extension (adblock) bloque des appels réseau, mais l’action peut quand même passer.");
+          showBanner("warn", "Une extension (adblock) bloque des appels réseau. Désactive-la si tu as des soucis.");
         } else {
           showBanner("alert", e?.message || "Réservation impossible. Le créneau vient peut-être d’être pris.");
         }
@@ -1042,7 +913,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           if (!isProbablyAdblockNetworkError(e)) {
             showBanner("alert", "Impossible d’enregistrer le profil (rules / réseau).");
           } else {
-            showBanner("warn", "Une extension (adblock) bloque certains appels, mais ça peut marcher quand même.");
+            showBanner("warn", "Une extension (adblock) bloque certains appels.");
           }
         } finally {
           btn.disabled = false;

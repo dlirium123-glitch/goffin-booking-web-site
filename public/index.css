@@ -1,80 +1,50 @@
-/* =======================================================
-   Goffin Booking — index.css (PRO)
-   - 1 colonne partout (PC + mobile)
-   - plus de chevauchement header/main
-   - calendrier responsive + scroll si besoin
-   Version: 2026-02-15-2
-   ======================================================= */
-
 :root{
   --brand:#0b3a6e;
-  --brand2:#123e77;
+  --brand2:#173a74;
   --bg:#f5f7fb;
   --card:#ffffff;
   --muted:#6b7280;
-  --text:#0f172a;
   --line:#dbe3f0;
 
-  --ok-bg:#dcfce7;
-  --ok-tx:#14532d;
+  --ok:#16a34a;
+  --warn:#f59e0b;
+  --danger:#b91c1c;
 
-  --warn-bg:#fff7ed;
-  --warn-tx:#7c2d12;
-
-  --err-bg:#fee2e2;
-  --err-tx:#7f1d1d;
-
-  --shadow:0 14px 30px rgba(0,0,0,.10);
-  --radius:16px;
-
-  --wrap:980px;          /* largeur max des cartes */
-  --pad:18px;            /* padding horizontal global */
+  --shadow:0 10px 25px rgba(0,0,0,.08);
+  --radius:14px;
 }
 
-/* ---------- reset ---------- */
-*{ box-sizing:border-box; }
-html,body{ height:100%; }
+*{box-sizing:border-box}
+
 body{
   margin:0;
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-  color:var(--text);
+  font-family: Arial, Helvetica, sans-serif;
   background: linear-gradient(180deg, var(--brand) 0%, var(--brand) 180px, var(--bg) 180px);
+  color:#0f172a;
 }
 
-/* ---------- header ---------- */
-header{
-  color:#fff;
-  padding:22px var(--pad);
-  position:relative;
-  z-index:10; /* header au-dessus, mais sans recouvrir main */
-}
+/* ================= HEADER ================= */
+
+header{ color:#fff; padding:22px 18px; }
 
 .topbar{
-  max-width:var(--wrap);
+  max-width:1200px;
   margin:0 auto;
   display:flex;
-  gap:14px;
+  gap:16px;
   align-items:flex-start;
   justify-content:space-between;
 }
 
-.brand h1{
-  margin:0;
-  font-size:20px;
-  letter-spacing:.2px;
-}
-.brand p{
-  margin:6px 0 0;
-  opacity:.9;
-  font-size:13px;
-}
+.brand h1{ margin:0; font-size:20px; }
+.brand p{ margin:6px 0 0; opacity:.9; font-size:13px; }
 
 .status{
   display:flex;
   gap:10px;
   align-items:center;
-  justify-content:flex-end;
   flex-wrap:wrap;
+  justify-content:flex-end;
 }
 
 .pill{
@@ -86,14 +56,9 @@ header{
   border-radius:999px;
   font-size:12px;
   background:rgba(255,255,255,.10);
-  backdrop-filter: blur(6px);
 }
-.pill .dot{
-  width:8px;
-  height:8px;
-  border-radius:50%;
-  background:#f87171;
-}
+
+.pill .dot{ width:8px; height:8px; border-radius:50%; background:#f87171; }
 .pill.ok .dot{ background:#34d399; }
 
 .btnTop{
@@ -102,7 +67,7 @@ header{
   color:var(--brand);
   padding:9px 12px;
   font-weight:800;
-  border-radius:12px;
+  border-radius:10px;
   cursor:pointer;
 }
 .btnTop.secondary{
@@ -110,26 +75,22 @@ header{
   color:#fff;
 }
 
-/* ---------- main layout (IMPORTANT: plus de margin négatif) ---------- */
+/* ================= LAYOUT ================= */
+
 main{
-  max-width:var(--wrap);
-  margin:0 auto;
-  padding: 14px var(--pad) 40px;
-  position:relative;
-  z-index:1;
+  max-width:1200px;
+  margin:-30px auto 40px;
+  padding:0 18px;
 }
 
 .grid{
-  /* 1 colonne partout = plus pro, plus stable */
-  display:flex;
-  flex-direction:column;
+  display:grid;
+  grid-template-columns: 1fr;
   gap:16px;
-  align-items:center;
+  align-items:start;
 }
 
-/* cartes */
 .card{
-  width:100%;
   background:var(--card);
   border:1px solid var(--line);
   border-radius:var(--radius);
@@ -137,50 +98,26 @@ main{
   padding:16px;
 }
 
-/* titres */
-h2{
-  margin:0 0 10px;
-  font-size:16px;
-}
-.muted{
-  color:var(--muted);
-  font-size:13px;
-}
-.tiny{
-  font-size:12px;
-  color:var(--muted);
-}
+h2{ margin:0 0 10px; font-size:16px; }
+.muted{ color:var(--muted); font-size:13px; }
+.tiny{ font-size:12px; color:var(--muted); }
 
-/* callouts */
-.callout{
-  border:1px solid var(--line);
-  border-radius:12px;
-  padding:12px 12px;
-  margin:10px 0;
-  background:#f8fafc;
+.row{
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
 }
-.callout strong{ display:block; margin-bottom:4px; }
-.callout.blue{
-  border-left:4px solid #2b5aa6;
-}
-.callout.orange{
-  border-left:4px solid #f59e0b;
-  background:#fff7ed;
-}
-.callout.green{
-  border-left:4px solid #22c55e;
-  background:#f0fdf4;
-}
+.row > *{ flex:1; }
 
-/* ---------- forms / panels (index.v3.js) ---------- */
 .label{
   display:block;
-  font-weight:900;
-  font-size:13px;
   margin:10px 0 6px;
+  font-size:13px;
+  font-weight:900;
+  color:#0f172a;
 }
 
-input, textarea, select{
+input, select, textarea{
   width:100%;
   border:1px solid var(--line);
   border-radius:12px;
@@ -189,78 +126,17 @@ input, textarea, select{
   background:#fff;
   outline:none;
 }
-textarea{ min-height:90px; resize:vertical; }
+textarea{ min-height:88px; resize:vertical; }
 
-.row{
-  display:flex;
-  gap:12px;
-  flex-wrap:wrap;
-}
-.row > *{
-  flex:1;
-  min-width:220px;
+input:focus, select:focus, textarea:focus{
+  border-color: rgba(11,58,110,.35);
+  box-shadow: 0 0 0 3px rgba(11,58,110,.10);
 }
 
-.stepWrap{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:10px;
-  margin-bottom:10px;
-}
+/* ================= BUTTONS ================= */
 
-.step{
-  display:inline-flex;
-  align-items:center;
-  gap:8px;
-  font-weight:900;
-  font-size:12px;
-  padding:6px 10px;
-  border-radius:999px;
-  border:1px solid var(--line);
-  background:#f8fafc;
-}
-
-.actionBox{
-  display:flex;
-  gap:10px;
-  margin:10px 0 12px;
-  flex-wrap:wrap;
-}
-
-.panel{
-  display:none;
-  border:1px solid var(--line);
-  background:#fff;
-  border-radius:14px;
-  padding:12px;
-  margin-top:12px;
-}
-
-.help{
-  margin:10px 0 0;
-  color:var(--muted);
-  font-size:12px;
-}
-
-.linkRow{
-  margin-top:10px;
-  display:flex;
-  justify-content:flex-end;
-}
-.linkBtn{
-  border:none;
-  background:transparent;
-  color:var(--brand);
-  font-weight:800;
-  cursor:pointer;
-  padding:0;
-}
-
-/* ---------- buttons ---------- */
 .btn{
-  width:100%;
-  padding:11px 12px;
+  padding:10px 12px;
   border-radius:12px;
   border:1px solid var(--line);
   background:#fff;
@@ -269,31 +145,249 @@ textarea{ min-height:90px; resize:vertical; }
 }
 .btn.primary{
   background:var(--brand);
-  border-color:var(--brand);
   color:#fff;
+  border-color:var(--brand);
 }
 .btn.alt{
-  background:#0f274a;
-  border-color:#0f274a;
-  color:#fff;
+  background:#eef2ff;
+  border-color:#dbeafe;
+  color:#1e3a8a;
 }
-.btn:disabled{
-  opacity:.55;
-  cursor:not-allowed;
+.btn:disabled{ opacity:.6; cursor:not-allowed; }
+
+/* ================= CALLOUTS ================= */
+
+.callout{
+  border:1px solid var(--line);
+  border-radius:12px;
+  padding:12px;
+  margin:10px 0;
+  background:#f8fafc;
+}
+.callout.green{
+  background:#f0fdf4;
+  border-color:#bbf7d0;
+}
+.callout.orange{
+  background:#fff7ed;
+  border-color:#fed7aa;
+}
+.callout.blue{
+  background:#eff6ff;
+  border-color:#bfdbfe;
 }
 
-/* ---------- banners ---------- */
-.alert,.ok,.warn{
+/* ================= AUTH PANELS ================= */
+
+.stepWrap{
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  align-items:center;
+  margin-bottom:10px;
+}
+
+.step{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  border:1px solid var(--line);
+  background:#f8fafc;
+  padding:6px 10px;
+  border-radius:999px;
+  font-weight:900;
+  font-size:12px;
+}
+
+.actionBox{
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+  margin:10px 0 12px;
+}
+.actionBox .btn{ flex:1; min-width:180px; }
+
+.panel{
+  border:1px solid var(--line);
+  border-radius:14px;
+  padding:12px;
+  background:#fff;
+  margin-top:10px;
+  display:none;
+}
+
+.linkRow{ margin-top:8px; display:flex; justify-content:flex-end; }
+.linkBtn{
+  background:transparent;
+  border:none;
+  color:#1e3a8a;
+  font-weight:900;
+  cursor:pointer;
+  padding:0;
+}
+
+.help{ margin:10px 0 0; font-size:12px; color:var(--muted); }
+
+/* ================= BANNERS ================= */
+
+.alert, .ok, .warn{
   display:none;
   margin-top:12px;
   padding:10px 12px;
   border-radius:12px;
+  font-weight:900;
+  border:1px solid transparent;
+}
+.alert{ background:#fee2e2; border-color:#fecaca; color:#7f1d1d; }
+.ok{ background:#dcfce7; border-color:#bbf7d0; color:#14532d; }
+.warn{ background:#ffedd5; border-color:#fed7aa; color:#7c2d12; }
+
+/* ================= CALENDAR (PRO CLIENT) ================= */
+
+.calHeader{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-end;
+  gap:12px;
+  flex-wrap:wrap;
+  margin-top:10px;
+}
+
+.calTitle{ font-weight:900; font-size:16px; }
+.calNav{ display:flex; gap:8px; align-items:center; }
+
+.calBtn{
   border:1px solid var(--line);
+  background:#fff;
+  padding:8px 10px;
+  border-radius:12px;
+  cursor:pointer;
   font-weight:900;
 }
-.alert{ background:var(--err-bg); color:var(--err-tx); border-color:#fecaca; }
-.ok{ background:var(--ok-bg); color:var(--ok-tx); border-color:#bbf7d0; }
-.warn{ background:var(--warn-bg); color:var(--warn-tx); border-color:#fed7aa; }
+
+.calLegend{
+  display:flex;
+  gap:14px;
+  flex-wrap:wrap;
+  margin:10px 0;
+  color:var(--muted);
+  font-size:12px;
+  align-items:center;
+}
+
+.dotKey{ display:inline-flex; gap:8px; align-items:center; }
+.kdot{
+  width:10px;
+  height:10px;
+  border-radius:999px;
+  display:inline-block;
+  border:1px solid var(--line);
+}
+.kfree{ background:#dcfce7; border-color:#bbf7d0; }
+.kblocked{ background:#f1f5f9; border-color:#e2e8f0; }
+.kselected{ background:#dbeafe; border-color:#bfdbfe; }
+.kmine{ background:#ede9fe; border-color:#ddd6fe; }
+
+.calGrid{
+  border:1px solid var(--line);
+  border-radius:14px;
+  overflow:hidden;
+  background:#fff;
+}
+
+.calRow{
+  display:grid;
+  grid-template-columns: 76px repeat(5, 1fr);
+}
+
+.calCell{
+  border-bottom:1px solid #eef2f7;
+  border-right:1px solid #eef2f7;
+  min-height:44px;
+  padding:8px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:#fff;
+}
+
+.calRow:last-child .calCell{ border-bottom:none; }
+.calCell:last-child{ border-right:none; }
+
+.timeCell{
+  background:#f8fafc;
+  font-weight:900;
+  color:#0f172a;
+  justify-content:flex-start;
+  padding-left:12px;
+  font-size:12px;
+}
+
+.dayHead{
+  background:#f8fafc;
+  font-weight:900;
+  font-size:12px;
+  color:#0f172a;
+}
+
+.slot{
+  cursor:pointer;
+  transition: transform .05s ease, box-shadow .05s ease, background .15s ease;
+}
+
+.slot.free{
+  background:#f0fdf4;
+}
+.slot.free:hover{
+  box-shadow: 0 6px 16px rgba(0,0,0,.08);
+  transform: translateY(-1px);
+}
+
+.slot.blocked{
+  background:#f1f5f9;
+  cursor:not-allowed;
+}
+
+.slot.selected{
+  background:#dbeafe;
+  outline:2px solid rgba(59,130,246,.35);
+  cursor:pointer;
+}
+
+.slot.mine{
+  background:#f5f3ff;
+  cursor:not-allowed;
+}
+
+.slot.disabled{
+  cursor:not-allowed;
+  opacity:.9;
+}
+
+.miniTag{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  height:22px;
+  padding:0 10px;
+  border-radius:999px;
+  font-weight:900;
+  font-size:12px;
+  border:1px solid var(--line);
+  background:#fff;
+}
+
+.miniTag.free{
+  background:#dcfce7;
+  border-color:#bbf7d0;
+  color:#14532d;
+}
+
+.miniTag.mine{
+  background:#ede9fe;
+  border-color:#ddd6fe;
+  color:#4c1d95;
+}
 
 .divider{
   height:1px;
@@ -301,163 +395,52 @@ textarea{ min-height:90px; resize:vertical; }
   margin:14px 0;
 }
 
-/* ---------- calendar (index.v3.js) ---------- */
-.calHeader{
-  display:flex;
-  align-items:flex-end;
-  justify-content:space-between;
-  gap:12px;
-  margin-top:10px;
-  flex-wrap:wrap;
-}
-.calTitle{
-  font-weight:1000;
-  font-size:14px;
-}
-.calSub{
-  font-size:12px;
-  color:var(--muted);
-  margin-top:3px;
-}
-.calNav{
-  display:flex;
-  gap:8px;
-  align-items:center;
-}
-.calBtn{
-  border:1px solid var(--line);
-  background:#fff;
-  border-radius:12px;
-  padding:8px 10px;
-  font-weight:900;
-  cursor:pointer;
-}
+/* ================= APPOINTMENTS LIST ================= */
 
-.calLegend{
-  display:flex;
-  gap:12px;
-  flex-wrap:wrap;
-  margin:10px 0 10px;
-  color:var(--muted);
-  font-size:12px;
-}
-.dotKey{ display:inline-flex; gap:8px; align-items:center; }
-.kdot{
-  width:10px; height:10px; border-radius:50%;
-  border:1px solid var(--line);
-}
-.kfree{ background:#dcfce7; border-color:#bbf7d0; }
-.kblocked{ background:#f3f4f6; }
-.kselected{ background:#dbeafe; border-color:#bfdbfe; }
-
-.calGrid{
-  /* si écran trop petit => scroll horizontal propre */
-  width:100%;
-  overflow-x:auto;
-  border:1px solid var(--line);
-  border-radius:14px;
-  background:#fff;
-}
-
-.calRow{
-  display:grid;
-  grid-template-columns: 74px repeat(5, minmax(110px, 1fr));
-  min-width: 720px; /* force scroll sur petit écran */
-}
-
-.calCell{
-  border-right:1px solid #eef2f7;
-  border-bottom:1px solid #eef2f7;
-  padding:9px 10px;
-  font-size:12px;
-}
-.calRow .calCell:last-child{ border-right:none; }
-
-.timeCell{
-  background:#f8fafc;
-  font-weight:1000;
-  color:#334155;
-}
-
-.dayHead{
-  background:#f8fafc;
-  font-weight:1000;
-  text-align:center;
-}
-
-.slot{
-  text-align:center;
-  user-select:none;
-}
-
-.slot.free{
-  background:#f0fdf4;
-  cursor:pointer;
-}
-.slot.blocked{
-  background:#f3f4f6;
-  color:#94a3b8;
-}
-.slot.selected{
-  background:#dbeafe;
-  outline:2px solid #93c5fd;
-  cursor:pointer;
-}
-.slot.disabled{
-  cursor:not-allowed;
-  opacity:.85;
-}
-
-.miniTag{
-  display:inline-block;
-  padding:3px 8px;
-  border-radius:999px;
-  border:1px solid var(--line);
-  font-size:11px;
-  font-weight:900;
-  background:#fff;
-}
-.miniTag.outlook{
-  background:#eef2ff;
-  border-color:#c7d2fe;
-  color:#3730a3;
-}
-
-/* ---------- appointments list ---------- */
 .apptList{
   display:flex;
   flex-direction:column;
   gap:10px;
+  margin-top:10px;
 }
+
 .apptCard{
   border:1px solid var(--line);
   border-radius:14px;
-  padding:10px 12px;
+  padding:12px;
   background:#fff;
 }
+
 .apptTop{
   display:flex;
-  align-items:flex-start;
   justify-content:space-between;
   gap:10px;
+  align-items:flex-start;
 }
+
 .badge{
   font-size:12px;
-  font-weight:1000;
+  font-weight:900;
   padding:6px 10px;
   border-radius:999px;
   border:1px solid var(--line);
   background:#f8fafc;
-  text-transform:lowercase;
+  white-space:nowrap;
 }
 .badge.pending{ background:#ffedd5; border-color:#fed7aa; }
 .badge.validated{ background:#dcfce7; border-color:#bbf7d0; }
 .badge.refused{ background:#fee2e2; border-color:#fecaca; }
 .badge.cancelled{ background:#f3f4f6; border-color:#e5e7eb; }
 
-/* ---------- responsive micro ---------- */
-@media (max-width: 520px){
-  .brand h1{ font-size:18px; }
-  .topbar{ align-items:flex-start; }
-  .btnTop{ width:100%; }
+/* ================= RESPONSIVE ================= */
+
+@media (max-width: 980px){
+  .calRow{ grid-template-columns: 64px repeat(5, 1fr); }
+  .calCell{ min-height:42px; padding:6px; }
+}
+
+@media (max-width: 740px){
+  main{ padding:0 12px; }
+  .calRow{ grid-template-columns: 56px repeat(5, 1fr); }
+  .miniTag{ font-size:11px; padding:0 8px; }
 }
