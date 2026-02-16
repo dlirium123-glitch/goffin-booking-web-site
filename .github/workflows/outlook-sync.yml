@@ -54,6 +54,7 @@ jobs:
           OUTLOOK_ICS_URL: "${{ secrets.OUTLOOK_ICS_URL }}"
           DAYS_FORWARD: "90"
           TZ: "Europe/Brussels"
+          DEBUG_OUTLOOK_META: "1"
         run: node sync.js
 
       - name: Summary
@@ -64,3 +65,4 @@ jobs:
           echo "- Frequency: every 30 minutes" >> $GITHUB_STEP_SUMMARY
           echo "- DAYS_FORWARD: 90" >> $GITHUB_STEP_SUMMARY
           echo "- TZ: Europe/Brussels" >> $GITHUB_STEP_SUMMARY
+          echo "- DEBUG_OUTLOOK_META: 1" >> $GITHUB_STEP_SUMMARY

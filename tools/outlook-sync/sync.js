@@ -3,6 +3,7 @@
 const { Firestore, Timestamp, FieldValue } = require("@google-cloud/firestore")
 const fetch = require("node-fetch")
 const ical = require("node-ical")
+const crypto = require("crypto")
 
 /**
  * Outlook → Firestore sync
@@ -12,6 +13,12 @@ const ical = require("node-ical")
  * - Never overrides validated slots
  * - Never overrides pending slots (but can flag conflict)
  * - Writes syncHealth/outlook for admin banner
+ *
+ * Optional SAFE debug fields (no sensitive data):
+ * - outlookBusy: boolean
+ * - outlookCount: number
+ * - outlookHash: string (sha256 hash from overlapped outlook event ids)
+ * - outlookUpdatedAt: timestamp
  */
 
 function main() {
@@ -43,6 +50,7 @@ async function run() {
   console.log("• daysForward:", config.daysForward)
   console.log("• range:", rangeStart.toISOString(), "→", rangeEnd.toISOString())
   console.log("• tz:", config.tz)
+  console.log("• debug:", config.debugOutlookMeta ? "ON" : "OFF")
 
   // 1) Fetch + parse ICS
   const icsText = await fetchIcs({ url: config.icsUrl })
@@ -67,6 +75,7 @@ async function run() {
   const plan = buildUpdatePlan({
     freeSlots,
     busyIntervals,
+    debugOutlookMeta: config.debugOutlookMeta,
   })
 
   console.log("• updates:", plan.toWrite.length, "• skipped:", plan.skipped)
@@ -92,6 +101,9 @@ async function run() {
       conflicts: plan.counts.conflicts,
       unchanged: plan.counts.unchanged,
     },
+    debug: {
+      outlookMeta: config.debugOutlookMeta ? "enabled" : "disabled",
+    },
   }
 
   await db.collection("syncHealth").doc("outlook").set(summary, { merge: true })
@@ -114,6 +126,9 @@ function readConfig() {
   const daysForward = toInt(process.env.DAYS_FORWARD, 90)
   const tz = process.env.TZ || "Europe/Brussels"
 
+  // SAFE debug (no sensitive payload stored)
+  const debugOutlookMeta = toBool(process.env.DEBUG_OUTLOOK_META, true)
+
   if (!projectId) throw new Error("Missing env: FIREBASE_PROJECT_ID (or GCLOUD_PROJECT)")
   if (!icsUrl) throw new Error("Missing env: OUTLOOK_ICS_URL")
 
@@ -122,12 +137,21 @@ function readConfig() {
     icsUrl,
     daysForward,
     tz,
+    debugOutlookMeta,
   }
 }
 
 function toInt(value, fallback) {
   const n = Number.parseInt(String(value || ""), 10)
   if (Number.isFinite(n) && n > 0) return n
+  return fallback
+}
+
+function toBool(value, fallback) {
+  if (value === undefined || value === null || value === "") return fallback
+  const v = String(value).trim().toLowerCase()
+  if (["1", "true", "yes", "y", "on"].includes(v)) return true
+  if (["0", "false", "no", "n", "off"].includes(v)) return false
   return fallback
 }
 
@@ -170,12 +194,11 @@ function parseBusyIntervals({ icsText, rangeStart, rangeEnd }) {
       start: clampedStart,
       end: clampedEnd,
       uid: String(item.uid || key || ""),
-      summary: String(item.summary || ""),
     })
   }
 
   intervals.sort((a, b) => a.start.getTime() - b.start.getTime())
-  return mergeIntervals(intervals)
+  return mergeIntervalsKeepingIds(intervals)
 }
 
 function toDate(value) {
@@ -186,22 +209,49 @@ function toDate(value) {
   return d
 }
 
-function mergeIntervals(intervals) {
+/**
+ * Merge intervals but keep a small "ids" list for hashing debug (uids only).
+ * We keep ids as a SET merged.
+ */
+function mergeIntervalsKeepingIds(intervals) {
   if (!intervals.length) return []
   const out = []
-  let cur = { ...intervals[0] }
+
+  let cur = {
+    start: intervals[0].start,
+    end: intervals[0].end,
+    ids: new Set([intervals[0].uid].filter(Boolean)),
+  }
 
   for (let i = 1; i < intervals.length; i++) {
     const next = intervals[i]
-    if (next.start <= cur.end) {
-      // merge overlap
+    const overlaps = next.start <= cur.end
+
+    if (overlaps) {
       cur.end = next.end > cur.end ? next.end : cur.end
+      if (next.uid) cur.ids.add(next.uid)
       continue
     }
-    out.push(cur)
-    cur = { ...next }
+
+    out.push({
+      start: cur.start,
+      end: cur.end,
+      ids: Array.from(cur.ids),
+    })
+
+    cur = {
+      start: next.start,
+      end: next.end,
+      ids: new Set([next.uid].filter(Boolean)),
+    }
   }
-  out.push(cur)
+
+  out.push({
+    start: cur.start,
+    end: cur.end,
+    ids: Array.from(cur.ids),
+  })
+
   return out
 }
 
@@ -226,7 +276,7 @@ async function loadFreeSlotsInRange({ db, rangeStart, rangeEnd }) {
 
 /* ----------------------------- PLAN UPDATES ----------------------------- */
 
-function buildUpdatePlan({ freeSlots, busyIntervals }) {
+function buildUpdatePlan({ freeSlots, busyIntervals, debugOutlookMeta }) {
   const BLOCK_REASON = {
     OUTLOOK: "outlook",
     VALIDATED: "validated",
@@ -260,8 +310,8 @@ function buildUpdatePlan({ freeSlots, busyIntervals }) {
 
     const isValidated = currentStatus === "blocked" && currentReason === BLOCK_REASON.VALIDATED
     if (isValidated) {
-      // Never change validated slots
       counts.keptValidated++
+
       // Ensure conflict is false for validated (clean UI)
       if (data.conflict === true) {
         toWrite.push({
@@ -270,7 +320,6 @@ function buildUpdatePlan({ freeSlots, busyIntervals }) {
             conflict: false,
             updatedAt: FieldValue.serverTimestamp(),
           },
-          reason: "validated-conflict-reset",
         })
       } else {
         counts.unchanged++
@@ -280,12 +329,21 @@ function buildUpdatePlan({ freeSlots, busyIntervals }) {
 
     const isPending = currentStatus === "pending"
 
-    const isBusy = overlapsAny({ start, end, intervals: busyIntervals })
+    // Find overlap info
+    const overlap = getOverlapMeta({ start, end, intervals: busyIntervals })
+    const isBusy = overlap.isBusy
 
     // Desired state for non-protected slots
     const desired = isBusy
       ? { status: "blocked", blockedReason: BLOCK_REASON.OUTLOOK }
       : { status: "free", blockedReason: null }
+
+    // Build safe debug meta
+    const outlookMetaPatch = buildOutlookMetaPatch({
+      isBusy,
+      overlapIds: overlap.ids,
+      debugOutlookMeta,
+    })
 
     // Pending is protected: do not change status, but flag conflict if Outlook overlaps
     if (isPending) {
@@ -294,8 +352,10 @@ function buildUpdatePlan({ freeSlots, busyIntervals }) {
       const shouldConflict = isBusy
       if (shouldConflict) counts.conflicts++
 
-      const needsWrite = (data.conflict === true) !== shouldConflict
-      if (!needsWrite) {
+      const needsConflictWrite = (data.conflict === true) !== shouldConflict
+      const needsMetaWrite = hasMetaDiff({ data, patch: outlookMetaPatch })
+
+      if (!needsConflictWrite && !needsMetaWrite) {
         counts.unchanged++
         continue
       }
@@ -304,21 +364,22 @@ function buildUpdatePlan({ freeSlots, busyIntervals }) {
         ref: slot.ref,
         patch: {
           conflict: shouldConflict,
+          ...outlookMetaPatch,
           updatedAt: FieldValue.serverTimestamp(),
         },
-        reason: "pending-conflict",
       })
       continue
     }
 
-    // Normal slots: we enforce desired state AND we RESET conflict every run
+    // Normal slots: enforce desired state AND reset conflict every run
     const nextConflict = false
 
     const willChangeStatus = currentStatus !== desired.status
     const willChangeReason = String(currentReason || "") !== String(desired.blockedReason || "")
     const willChangeConflict = (data.conflict === true) !== nextConflict
+    const willChangeMeta = hasMetaDiff({ data, patch: outlookMetaPatch })
 
-    if (!willChangeStatus && !willChangeReason && !willChangeConflict) {
+    if (!willChangeStatus && !willChangeReason && !willChangeConflict && !willChangeMeta) {
       counts.unchanged++
       continue
     }
@@ -332,13 +393,77 @@ function buildUpdatePlan({ freeSlots, busyIntervals }) {
         status: desired.status,
         blockedReason: desired.blockedReason,
         conflict: nextConflict,
+        ...outlookMetaPatch,
         updatedAt: FieldValue.serverTimestamp(),
       },
-      reason: "enforce-desired",
     })
   }
 
   return { toWrite, skipped, counts }
+}
+
+function buildOutlookMetaPatch({ isBusy, overlapIds, debugOutlookMeta }) {
+  // If debug disabled -> strip meta fields (keep clean)
+  if (!debugOutlookMeta) {
+    return {
+      outlookBusy: FieldValue.delete(),
+      outlookCount: FieldValue.delete(),
+      outlookHash: FieldValue.delete(),
+      outlookUpdatedAt: FieldValue.delete(),
+    }
+  }
+
+  if (!isBusy) {
+    // Not busy -> clean meta
+    return {
+      outlookBusy: false,
+      outlookCount: 0,
+      outlookHash: null,
+      outlookUpdatedAt: FieldValue.serverTimestamp(),
+    }
+  }
+
+  const ids = Array.isArray(overlapIds) ? overlapIds.filter(Boolean) : []
+  const hash = sha256(ids.sort().join("|"))
+
+  return {
+    outlookBusy: true,
+    outlookCount: ids.length,
+    outlookHash: hash,
+    outlookUpdatedAt: FieldValue.serverTimestamp(),
+  }
+}
+
+function hasMetaDiff({ data, patch }) {
+  // Quick check to avoid writes if unchanged
+  if (!patch) return false
+
+  // When debug disabled we delete fields -> write only if they exist
+  const deleting =
+    patch.outlookBusy && typeof patch.outlookBusy === "object" && patch.outlookBusy._methodName === "FieldValue.delete"
+  if (deleting) {
+    const hasAny =
+      data.outlookBusy !== undefined ||
+      data.outlookCount !== undefined ||
+      data.outlookHash !== undefined ||
+      data.outlookUpdatedAt !== undefined
+    return hasAny
+  }
+
+  // Compare primitives only (updatedAt is serverTimestamp -> ignore)
+  const isBusy = Boolean(patch.outlookBusy)
+  const count = Number(patch.outlookCount || 0)
+  const hash = patch.outlookHash || null
+
+  if (Boolean(data.outlookBusy) !== isBusy) return true
+  if (Number(data.outlookCount || 0) !== count) return true
+  if ((data.outlookHash || null) !== hash) return true
+
+  return false
+}
+
+function sha256(input) {
+  return crypto.createHash("sha256").update(String(input)).digest("hex")
 }
 
 function toDateFromTs(ts) {
@@ -353,21 +478,29 @@ function toDateFromTs(ts) {
 
 /* ----------------------------- OVERLAP CHECK ----------------------------- */
 
-function overlapsAny({ start, end, intervals }) {
+function getOverlapMeta({ start, end, intervals }) {
   // intervals are sorted and merged; we can early-break
   const startMs = start.getTime()
   const endMs = end.getTime()
+
+  const ids = new Set()
 
   for (const it of intervals) {
     const itStart = it.start.getTime()
     const itEnd = it.end.getTime()
 
-    if (itStart >= endMs) return false // no further overlaps
+    if (itStart >= endMs) break
     if (itEnd <= startMs) continue
-    return true
+
+    // overlap
+    if (Array.isArray(it.ids)) it.ids.forEach((x) => ids.add(x))
+    else if (it.uid) ids.add(it.uid)
   }
 
-  return false
+  return {
+    isBusy: ids.size > 0,
+    ids: Array.from(ids),
+  }
 }
 
 /* ----------------------------- COMMIT ----------------------------- */
