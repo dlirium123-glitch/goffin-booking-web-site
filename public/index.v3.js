@@ -1,10 +1,11 @@
 // =======================================================
 // Goffin Booking — index.v3.js (PRO)
 // Étape 2: Calendrier pro + Formulaire intelligent + FIX permissions
-// - Le client voit: Libre / Indisponible / Mon RDV (pas Outlook / pas <48h)
-// - IMPORTANT: freeSlots update côté client = status + updatedAt ONLY (rules)
+// - Le client lit: publicSlots (free|busy)
+// - Le client écrit: appointments + slotLocks (1 doc par créneau)
+// - Le client NE TOUCHE PAS: freeSlots (admin-only) / slots (admin-only)
 // =======================================================
-const INDEX_VERSION = "v3-2026-02-16-PRO-step3"
+const INDEX_VERSION = "v3-2026-02-17-PRO-step4-publicSlots+locks"
 console.log("index.v3.js chargé ✅", INDEX_VERSION)
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -377,7 +378,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       <div class="callout green">
         <strong>Profil OK ✅</strong>
-        <div class="muted">Choisissez un créneau libre. Les détails internes (Outlook / 48h) ne sont pas affichés.</div>
+        <div class="muted">Choisissez un créneau libre. Les détails internes (Outlook / règles internes) ne sont pas affichés.</div>
       </div>
 
       <div class="calHeader">
@@ -542,13 +543,14 @@ document.addEventListener("DOMContentLoaded", async () => {
     grid.innerHTML = headRow + rowsHtml
   }
 
-  async function fetchFreeSlotsForWeek(db, weekStart) {
+  // ✅ FIX: côté client on lit publicSlots (pas freeSlots)
+  async function fetchPublicSlotsForWeek(db, weekStart) {
     const weekEnd = addDays(weekStart, 7)
     const tsStart = firebase.firestore.Timestamp.fromDate(weekStart)
     const tsEnd = firebase.firestore.Timestamp.fromDate(weekEnd)
 
     const snap = await db
-      .collection("freeSlots")
+      .collection("publicSlots")
       .where("start", ">=", tsStart)
       .where("start", "<", tsEnd)
       .get()
@@ -645,35 +647,35 @@ document.addEventListener("DOMContentLoaded", async () => {
     return errors
   }
 
+  // ✅ FIX: réservation côté client = lock + appointment
+  // - lock doc id = slotId (docId du publicSlots)
+  // - si lock existe déjà => créneau déjà pris
   async function bookSlot(db, user, selected, smartPayload) {
     const apptRef = db.collection("appointments").doc()
-
-    // ✅ lock déterministe = 1 doc par créneau
-    const lockRef = db.collection("slots").doc(selected.freeSlotDocId)
-
-    const freeRef = db.collection("freeSlots").doc(selected.freeSlotDocId)
+    const lockRef = db.collection("slotLocks").doc(selected.slotId)
 
     const startTs = firebase.firestore.Timestamp.fromDate(selected.startDate)
     const endTs = firebase.firestore.Timestamp.fromDate(selected.endDate)
 
     await db.runTransaction(async (tx) => {
-      const freeSnap = await tx.get(freeRef)
-      if (!freeSnap.exists) throw new Error("Créneau introuvable.")
+      const lockSnap = await tx.get(lockRef)
+      if (lockSnap.exists) throw new Error("Ce créneau vient d’être pris. Choisissez un autre créneau.")
 
-      const freeData = freeSnap.data() || {}
-      if (String(freeData.status || "").toLowerCase() !== "free") {
-        throw new Error("Ce créneau n’est plus disponible.")
-      }
-
-      // ✅ conforme rules client: status + updatedAt seulement
-      tx.update(freeRef, {
+      tx.set(lockRef, {
+        uid: user.uid,
         status: "pending",
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        start: startTs,
+        end: endTs,
+        appointmentId: apptRef.id,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       })
 
       tx.set(apptRef, {
         uid: user.uid,
         email: (user.email || "").toLowerCase(),
+        slotId: selected.slotId,
+        lockId: lockRef.id,
+
         start: startTs,
         end: endTs,
         status: "pending",
@@ -691,16 +693,6 @@ document.addEventListener("DOMContentLoaded", async () => {
         photosAvailable: smartPayload.photosAvailable || "Non",
         photosLink: smartPayload.photosLink || "",
         note: smartPayload.note || "",
-      })
-
-      tx.set(lockRef, {
-        uid: user.uid,
-        start: startTs,
-        end: endTs,
-        status: "booked",
-        slotId: selected.freeSlotDocId,
-        appointmentId: apptRef.id,
-        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       })
     })
   }
@@ -735,7 +727,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   let currentWeekStart = startOfWeekMonday(new Date())
   let selectedSlot = null
-  let lastFreeSlotsMap = new Map()
+  let lastPublicSlotsMap = new Map()
   let myApptKeys = new Set()
 
   async function refreshCalendarAndAppointments(user) {
@@ -762,11 +754,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     try {
-      lastFreeSlotsMap = await fetchFreeSlotsForWeek(db, currentWeekStart)
+      lastPublicSlotsMap = await fetchPublicSlotsForWeek(db, currentWeekStart)
     } catch (e) {
       console.error(e)
-      if (!isProbablyAdblockNetworkError(e)) showBanner("alert", "Impossible de charger les créneaux.")
-      lastFreeSlotsMap = new Map()
+      if (!isProbablyAdblockNetworkError(e)) showBanner("alert", "Impossible de charger les créneaux (publicSlots).")
+      lastPublicSlotsMap = new Map()
     }
 
     const slotStateByKey = new Map()
@@ -780,7 +772,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         start.setMinutes(mins)
 
         const key = `${dateKey(start)}_${String(start.getHours()).padStart(2, "0")}${String(start.getMinutes()).padStart(2, "0")}`
-        const freeDoc = lastFreeSlotsMap.get(key)
+        const slotDoc = lastPublicSlotsMap.get(key)
 
         let status = "blocked"
         let disabled = true
@@ -792,12 +784,12 @@ document.addEventListener("DOMContentLoaded", async () => {
           disabled = true
           title = "Votre rendez-vous"
           label = "Mon RDV"
-        } else if (!freeDoc) {
+        } else if (!slotDoc) {
           status = "blocked"
           disabled = true
           title = "Indisponible"
         } else {
-          const st = String(freeDoc.status || "blocked").toLowerCase()
+          const st = String(slotDoc.status || "busy").toLowerCase()
 
           if (start < min48) {
             status = "blocked"
@@ -816,7 +808,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
 
         if (selectedSlot && selectedSlot.key === key) {
-          const stillFree = !!freeDoc && String(freeDoc.status || "").toLowerCase() === "free" && start >= min48
+          const stillFree = !!slotDoc && String(slotDoc.status || "").toLowerCase() === "free" && start >= min48
           if (!stillFree) {
             selectedSlot = null
           } else {
@@ -840,7 +832,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         const key = cell.getAttribute("data-slotkey")
         if (!key) return
 
-        const freeDoc = lastFreeSlotsMap.get(key)
+        const slotDoc = lastPublicSlotsMap.get(key)
 
         if (selectedSlot && selectedSlot.key === key) {
           selectedSlot = null
@@ -851,7 +843,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
 
         if (myApptKeys.has(key)) return
-        if (!freeDoc || String(freeDoc.status || "").toLowerCase() !== "free") return
+        if (!slotDoc || String(slotDoc.status || "").toLowerCase() !== "free") return
 
         const [dPart, hm] = key.split("_")
         const [yy, mo, dd] = dPart.split("-").map((x) => parseInt(x, 10))
@@ -867,7 +859,13 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         const end = addMinutesDate(start, CFG.slotMinutes)
 
-        selectedSlot = { key, startDate: start, endDate: end, freeSlotDocId: freeDoc.id }
+        selectedSlot = {
+          key,
+          startDate: start,
+          endDate: end,
+          slotId: slotDoc.id, // ✅ docId = slotId (ex: 20260217_0930)
+        }
+
         const b = document.getElementById("btnBook")
         if (b) b.disabled = false
         await refreshCalendarAndAppointments(user)
