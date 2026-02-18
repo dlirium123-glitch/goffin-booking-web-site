@@ -34,36 +34,42 @@ function isWeekend(d) {
 function parseHHMM(value) {
   const m = /^(\d{2}):(\d{2})$/.exec(String(value || ""))
   if (!m) return null
-  const hh = Number(m[1])
-  const mm = Number(m[2])
-  if (Number.isNaN(hh) || Number.isNaN(mm)) return null
-  return hh * 60 + mm
+  return Number(m[1]) * 60 + Number(m[2])
 }
 
 function rangesOverlap(aStart, aEnd, bStart, bEnd) {
   return aStart < bEnd && bStart < aEnd
 }
 
-function isBlocked(doc) {
-  const status = String(doc?.status || "").toLowerCase()
-  return status === "blocked"
+function clampToWorkHours(date, dayStartMin, dayEndMin) {
+  const startOfDay = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0)
+  const mins = date.getHours() * 60 + date.getMinutes()
+  if (mins < dayStartMin) {
+    startOfDay.setMinutes(dayStartMin)
+    return startOfDay
+  }
+  if (mins > dayEndMin) {
+    startOfDay.setMinutes(dayEndMin)
+    return startOfDay
+  }
+  return date
 }
 
-function isValidatedBlocked(doc) {
+function roundDownToSlot(date, dayStartMin, slotMinutes) {
+  const base = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0)
+  base.setMinutes(dayStartMin)
+  if (date <= base) return base
+
+  const deltaMin = Math.floor((date.getTime() - base.getTime()) / 60000)
+  const steps = Math.floor(deltaMin / slotMinutes)
+  return addMinutes(base, steps * slotMinutes)
+}
+
+function isProtectedBlocked(doc) {
   const status = String(doc?.status || "").toLowerCase()
   const reason = String(doc?.blockedReason || "").toLowerCase()
-  return status === "blocked" && reason === "validated"
-}
-
-function isOutlookBlocked(doc) {
-  const status = String(doc?.status || "").toLowerCase()
-  const reason = String(doc?.blockedReason || "").toLowerCase()
-  return status === "blocked" && reason === "outlook"
-}
-
-function pickCreatedAt({ existingDoc, nowServer }) {
-  if (existingDoc?.createdAt) return existingDoc.createdAt
-  return nowServer
+  if (status !== "blocked") return false
+  return reason === "validated"
 }
 
 async function setSyncHealth({ col, status, reason, message, meta }) {
@@ -74,101 +80,48 @@ async function setSyncHealth({ col, status, reason, message, meta }) {
       reason: reason || null,
       message: message || null,
       meta: meta || null,
-      updatedAt: nowServer
+      updatedAt: nowServer,
     },
     { merge: true }
   )
 }
 
-async function fetchWithTimeout(url, timeoutMs = 20000) {
-  const controller = new AbortController()
-  const t = setTimeout(() => controller.abort(), timeoutMs)
+// ✅ Expand VEVENT (RRULE) safely
+function collectEventOccurrences({ ev, fromDate, toDate }) {
+  const occurrences = []
 
+  const start = ev.start instanceof Date ? ev.start : null
+  const end = ev.end instanceof Date ? ev.end : null
+  if (!start || !end) return occurrences
+
+  // Non-récurrent
+  if (!ev.rrule) {
+    occurrences.push({ start, end })
+    return occurrences
+  }
+
+  // Récurrent (RRULE)
   try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        "user-agent": "goffin-booking-outlook-sync/1.0"
+    const between = ev.rrule.between(fromDate, toDate, true)
+    between.forEach((occStart) => {
+      const durationMs = end.getTime() - start.getTime()
+      const occEnd = new Date(occStart.getTime() + durationMs)
+
+      // exclusions (EXDATE)
+      if (ev.exdate) {
+        const iso = occStart.toISOString()
+        const isExcluded = Object.values(ev.exdate).some((d) => d instanceof Date && d.toISOString() === iso)
+        if (isExcluded) return
       }
+
+      occurrences.push({ start: occStart, end: occEnd })
     })
-    return res
-  } finally {
-    clearTimeout(t)
-  }
-}
-
-function eachDayBetween(fromDate, toDate) {
-  const days = []
-  const cursor = new Date(fromDate.getFullYear(), fromDate.getMonth(), fromDate.getDate(), 0, 0, 0, 0)
-  const end = new Date(toDate.getFullYear(), toDate.getMonth(), toDate.getDate(), 0, 0, 0, 0)
-
-  while (cursor < end) {
-    days.push(new Date(cursor))
-    cursor.setDate(cursor.getDate() + 1)
-  }
-  return days
-}
-
-function buildBusyIdsFromEvents({
-  events,
-  fromDate,
-  toDate,
-  dayStartMin,
-  dayEndMin,
-  slotMinutes
-}) {
-  const busyIds = new Set()
-  const lastStartMin = dayEndMin - slotMinutes
-
-  for (const ev of events) {
-    const start = ev.start instanceof Date ? ev.start : null
-    const end = ev.end instanceof Date ? ev.end : null
-    if (!start || !end) continue
-    if (end <= fromDate || start >= toDate) continue
-
-    const winStart = new Date(Math.max(start.getTime(), fromDate.getTime()))
-    const winEnd = new Date(Math.min(end.getTime(), toDate.getTime()))
-    const days = eachDayBetween(winStart, addMinutes(winEnd, 1))
-
-    for (const day of days) {
-      if (isWeekend(day)) continue
-
-      // slots de la journée (heures ouvrées)
-      for (let mins = dayStartMin; mins <= lastStartMin; mins += slotMinutes) {
-        const slotStart = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0, 0)
-        slotStart.setMinutes(mins)
-        const slotEnd = addMinutes(slotStart, slotMinutes)
-
-        if (slotEnd <= winStart) continue
-        if (slotStart >= winEnd) continue
-
-        if (rangesOverlap(slotStart, slotEnd, start, end)) busyIds.add(slotIdFromDate(slotStart))
-      }
-    }
+  } catch (e) {
+    // fallback: au moins l'event "master"
+    occurrences.push({ start, end })
   }
 
-  return busyIds
-}
-
-async function loadExistingByRange({ col, fromDate, toDate }) {
-  const fromTs = Timestamp.fromDate(fromDate)
-  const toTs = Timestamp.fromDate(toDate)
-  const snap = await col.where("start", ">=", fromTs).where("start", "<", toTs).get()
-
-  const map = new Map()
-  snap.forEach((d) => map.set(d.id, d.data() || {}))
-  return map
-}
-
-async function commitWrites({ db, writes }) {
-  const MAX = 450
-  for (let i = 0; i < writes.length; i += MAX) {
-    const batch = db.batch()
-    writes.slice(i, i + MAX).forEach(({ ref, data, merge }) => {
-      batch.set(ref, data, { merge: merge !== false })
-    })
-    await batch.commit()
-  }
+  return occurrences
 }
 
 async function main() {
@@ -196,7 +149,7 @@ async function main() {
       col: syncHealthCol,
       status: "aborted",
       reason: "missing_ics_url",
-      message: "OUTLOOK_ICS_URL absent"
+      message: "OUTLOOK_ICS_URL absent",
     })
     console.log("Aborted: missing OUTLOOK_ICS_URL")
     return
@@ -206,144 +159,102 @@ async function main() {
   const fromDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + startOffsetDays)
   const toDate = new Date(fromDate.getTime() + daysForward * 24 * 60 * 60000)
 
-  console.log("Outlook sync", {
-    projectId,
-    from: fromDate.toISOString(),
-    to: toDate.toISOString(),
-    daysForward,
-    slotMinutes,
-    dayStartStr,
-    dayEndStr
-  })
+  console.log("Outlook sync", { projectId, from: fromDate.toISOString(), to: toDate.toISOString() })
 
-  // ---- Fetch ICS
   let icsText = ""
   try {
-    const res = await fetchWithTimeout(icsUrl, 20000)
+    const res = await fetch(icsUrl)
     if (!res.ok) throw new Error(`ICS fetch failed: ${res.status}`)
     icsText = await res.text()
   } catch (e) {
-    await setSyncHealth({
-      col: syncHealthCol,
-      status: "failed",
-      reason: "fetch_failed",
-      message: String(e.message || e)
-    })
+    await setSyncHealth({ col: syncHealthCol, status: "failed", reason: "fetch_failed", message: String(e.message || e) })
     throw e
   }
 
-  // ---- Parse ICS
-  let parsed = null
+  let parsed
   try {
     parsed = ical.sync.parseICS(icsText)
   } catch (e) {
-    await setSyncHealth({
-      col: syncHealthCol,
-      status: "failed",
-      reason: "parse_failed",
-      message: String(e.message || e)
-    })
+    await setSyncHealth({ col: syncHealthCol, status: "failed", reason: "parse_failed", message: String(e.message || e) })
     throw e
   }
 
-  const events = Object.values(parsed).filter((ev) => ev && ev.type === "VEVENT")
+  // Build busy slot ids from events (RRULE supported)
+  const busyIds = new Set()
+  let eventsSeen = 0
+  let occurrencesSeen = 0
 
-  // ---- Compute busy slot ids
-  const busyIds = buildBusyIdsFromEvents({
-    events,
-    fromDate,
-    toDate,
-    dayStartMin,
-    dayEndMin,
-    slotMinutes
+  Object.values(parsed).forEach((ev) => {
+    if (!ev || ev.type !== "VEVENT") return
+    eventsSeen++
+
+    // ignore cancelled / transparent
+    if (String(ev.status || "").toUpperCase() === "CANCELLED") return
+    if (String(ev.transp || "").toUpperCase() === "TRANSPARENT") return
+
+    const occs = collectEventOccurrences({ ev, fromDate, toDate })
+    occs.forEach(({ start, end }) => {
+      if (end <= fromDate || start >= toDate) return
+      occurrencesSeen++
+
+      let cursor = new Date(Math.max(start.getTime(), fromDate.getTime()))
+      const windowEnd = new Date(Math.min(end.getTime(), toDate.getTime()))
+
+      while (cursor < windowEnd) {
+        if (!isWeekend(cursor)) {
+          const dayClamped = clampToWorkHours(cursor, dayStartMin, dayEndMin)
+          const slotStart = roundDownToSlot(dayClamped, dayStartMin, slotMinutes)
+          const slotEnd = addMinutes(slotStart, slotMinutes)
+
+          const slotStartMin = slotStart.getHours() * 60 + slotStart.getMinutes()
+          if (slotStartMin >= dayStartMin && slotStartMin <= (dayEndMin - slotMinutes)) {
+            if (rangesOverlap(slotStart, slotEnd, start, end)) busyIds.add(slotIdFromDate(slotStart))
+          }
+        }
+        cursor = addMinutes(cursor, 15)
+      }
+    })
   })
 
-  console.log("Busy slots from Outlook:", busyIds.size)
+  console.log("Events seen:", eventsSeen, "Occurrences:", occurrencesSeen, "Busy slots:", busyIds.size)
 
-  // ---- Load existing internal slots
-  let existing = new Map()
+  // Load existing freeSlots range to avoid overwriting validated + cleanup old outlook blocks
+  const existing = new Map()
   try {
-    existing = await loadExistingByRange({ col: freeSlotsCol, fromDate, toDate })
+    const fromTs = Timestamp.fromDate(fromDate)
+    const toTs = Timestamp.fromDate(toDate)
+    const snap = await freeSlotsCol.where("start", ">=", fromTs).where("start", "<", toTs).get()
+    snap.forEach((d) => existing.set(d.id, d.data() || {}))
   } catch (e) {
-    await setSyncHealth({
-      col: syncHealthCol,
-      status: "failed",
-      reason: "firestore_read_failed",
-      message: String(e.message || e)
-    })
+    await setSyncHealth({ col: syncHealthCol, status: "failed", reason: "firestore_read_failed", message: String(e.message || e) })
     throw e
   }
 
   const nowServer = FieldValue.serverTimestamp()
   const writes = []
 
-  let blockedApplied = 0
-  let blockedSkippedValidated = 0
-  let blockedSkippedOtherBlocked = 0
-  let releasedOutlook = 0
-  let conflictsMarked = 0
-
   // 1) Apply Outlook busy blocks
   for (const id of busyIds) {
     const ex = existing.get(id)
-    const createdAt = pickCreatedAt({ existingDoc: ex, nowServer })
 
-    // ✅ si VALIDATED => ne jamais toucher le statut, mais public doit être busy
-    if (ex && isValidatedBlocked(ex)) {
-      blockedSkippedValidated++
-
-      // Option: marquer conflit (utile en admin)
-      writes.push({
-        ref: freeSlotsCol.doc(id),
-        data: {
-          conflict: true,
-          conflictReason: "outlook_overlaps_validated",
-          conflictUpdatedAt: nowServer
-        },
-        merge: true
-      })
-      conflictsMarked++
-
+    if (ex && isProtectedBlocked(ex)) {
       writes.push({
         ref: publicSlotsCol.doc(id),
-        data: {
-          status: "busy",
-          updatedAt: nowServer,
-          createdAt
-        },
-        merge: true
+        data: { status: "busy", updatedAt: nowServer },
+        merge: true,
       })
       continue
     }
 
-    // ✅ si déjà blocked pour AUTRE raison (maintenance, manuel, etc.) => ne pas écraser
-    if (ex && isBlocked(ex) && !isOutlookBlocked(ex)) {
-      blockedSkippedOtherBlocked++
-
-      writes.push({
-        ref: publicSlotsCol.doc(id),
-        data: {
-          status: "busy",
-          updatedAt: nowServer,
-          createdAt
-        },
-        merge: true
-      })
-      continue
-    }
-
-    // ✅ OK: on bloque (ou re-bloque) en outlook
     writes.push({
       ref: freeSlotsCol.doc(id),
       data: {
         status: "blocked",
         blockedReason: "outlook",
-        conflict: false,
-        conflictReason: null,
         updatedAt: nowServer,
-        createdAt
+        createdAt: ex ? ex.createdAt || nowServer : nowServer,
       },
-      merge: true
+      merge: true,
     })
 
     writes.push({
@@ -351,17 +262,16 @@ async function main() {
       data: {
         status: "busy",
         updatedAt: nowServer,
-        createdAt
       },
-      merge: true
+      merge: true,
     })
-
-    blockedApplied++
   }
 
-  // 2) Cleanup: release slots that were blocked by outlook but no longer busy
+  // 2) Cleanup: unblock old outlook blocks
   for (const [id, doc] of existing.entries()) {
-    if (!isOutlookBlocked(doc)) continue
+    const status = String(doc?.status || "").toLowerCase()
+    const reason = String(doc?.blockedReason || "").toLowerCase()
+    if (status !== "blocked" || reason !== "outlook") continue
     if (busyIds.has(id)) continue
 
     writes.push({
@@ -369,50 +279,38 @@ async function main() {
       data: {
         status: "free",
         blockedReason: null,
-        conflict: false,
-        conflictReason: null,
-        updatedAt: nowServer
+        updatedAt: nowServer,
       },
-      merge: true
+      merge: true,
     })
 
     writes.push({
       ref: publicSlotsCol.doc(id),
       data: {
         status: "free",
-        updatedAt: nowServer
+        updatedAt: nowServer,
       },
-      merge: true
+      merge: true,
     })
-
-    releasedOutlook++
   }
 
-  // ---- Commit
-  await commitWrites({ db, writes })
+  // Commit batches
+  const MAX = 450
+  for (let i = 0; i < writes.length; i += MAX) {
+    const batch = db.batch()
+    writes.slice(i, i + MAX).forEach(({ ref, data, merge }) => {
+      batch.set(ref, data, { merge: merge !== false })
+    })
+    await batch.commit()
+  }
 
   await setSyncHealth({
     col: syncHealthCol,
     status: "ok",
-    meta: {
-      busySlots: busyIds.size,
-      blockedApplied,
-      blockedSkippedValidated,
-      blockedSkippedOtherBlocked,
-      releasedOutlook,
-      conflictsMarked
-    }
+    meta: { eventsSeen, occurrencesSeen, busySlots: busyIds.size, writes: writes.length },
   })
 
-  console.log("Outlook sync done ✅", {
-    busySlots: busyIds.size,
-    writes: writes.length,
-    blockedApplied,
-    blockedSkippedValidated,
-    blockedSkippedOtherBlocked,
-    releasedOutlook,
-    conflictsMarked
-  })
+  console.log("Outlook sync done ✅", { writes: writes.length, busy: busyIds.size })
 }
 
 main().catch(async (e) => {
@@ -426,7 +324,7 @@ main().catch(async (e) => {
           status: "failed",
           reason: "exception",
           message: String(e.message || e),
-          updatedAt: FieldValue.serverTimestamp()
+          updatedAt: FieldValue.serverTimestamp(),
         },
         { merge: true }
       )

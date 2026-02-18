@@ -1,11 +1,10 @@
 // =======================================================
 // Goffin Booking — index.v3.js (PRO)
 // Étape 2: Calendrier pro + Formulaire intelligent + FIX permissions
-// - Le client lit: publicSlots (free|busy)
-// - Le client écrit: appointments + slotLocks (1 doc par créneau)
-// - Le client NE TOUCHE PAS: freeSlots (admin-only) / slots (admin-only)
+// - Le client voit: Libre / Indisponible / Mon RDV
+// - SOURCE DATA CLIENT: publicSlots (free|busy)
 // =======================================================
-const INDEX_VERSION = "v3-2026-02-17-PRO-step4-publicSlots+locks"
+const INDEX_VERSION = "v3-2026-02-17-PRO-publicSlots"
 console.log("index.v3.js chargé ✅", INDEX_VERSION)
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -378,7 +377,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       <div class="callout green">
         <strong>Profil OK ✅</strong>
-        <div class="muted">Choisissez un créneau libre. Les détails internes (Outlook / règles internes) ne sont pas affichés.</div>
+        <div class="muted">Choisissez un créneau libre. Les détails internes ne sont pas affichés.</div>
       </div>
 
       <div class="calHeader">
@@ -543,7 +542,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     grid.innerHTML = headRow + rowsHtml
   }
 
-  // ✅ FIX: côté client on lit publicSlots (pas freeSlots)
+  // ✅ IMPORTANT: le client lit publicSlots (free|busy)
   async function fetchPublicSlotsForWeek(db, weekStart) {
     const weekEnd = addDays(weekStart, 7)
     const tsStart = firebase.firestore.Timestamp.fromDate(weekStart)
@@ -647,35 +646,20 @@ document.addEventListener("DOMContentLoaded", async () => {
     return errors
   }
 
-  // ✅ FIX: réservation côté client = lock + appointment
-  // - lock doc id = slotId (docId du publicSlots)
-  // - si lock existe déjà => créneau déjà pris
   async function bookSlot(db, user, selected, smartPayload) {
     const apptRef = db.collection("appointments").doc()
-    const lockRef = db.collection("slotLocks").doc(selected.slotId)
+
+    const lockRef = db.collection("slots").doc(selected.slotId)
 
     const startTs = firebase.firestore.Timestamp.fromDate(selected.startDate)
     const endTs = firebase.firestore.Timestamp.fromDate(selected.endDate)
 
     await db.runTransaction(async (tx) => {
-      const lockSnap = await tx.get(lockRef)
-      if (lockSnap.exists) throw new Error("Ce créneau vient d’être pris. Choisissez un autre créneau.")
-
-      tx.set(lockRef, {
-        uid: user.uid,
-        status: "pending",
-        start: startTs,
-        end: endTs,
-        appointmentId: apptRef.id,
-        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-      })
-
+      // client ne modifie PAS publicSlots/freeSlots (sécurité)
+      // il crée juste une appointment pending
       tx.set(apptRef, {
         uid: user.uid,
         email: (user.email || "").toLowerCase(),
-        slotId: selected.slotId,
-        lockId: lockRef.id,
-
         start: startTs,
         end: endTs,
         status: "pending",
@@ -693,7 +677,12 @@ document.addEventListener("DOMContentLoaded", async () => {
         photosAvailable: smartPayload.photosAvailable || "Non",
         photosLink: smartPayload.photosLink || "",
         note: smartPayload.note || "",
+        slotId: selected.slotId,
       })
+
+      // lock informatif (optionnel). Ici rules admin-only => ça échouerait.
+      // On ne lock pas côté client dans la version Spark.
+      // (On gère le lock côté admin lors de la validation)
     })
   }
 
@@ -737,7 +726,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const calSub = document.getElementById("calSub")
     const calTitle = document.getElementById("calTitle")
     if (calTitle) calTitle.textContent = `Semaine du ${days[0].toLocaleDateString("fr-BE")}`
-    if (calSub) calSub.textContent = `Créneaux: ${CFG.slotMinutes} min (RDV ${CFG.appointmentMinutes} + trajet)`
+    if (calSub) calSub.textContent = `Créneaux: ${CFG.slotMinutes} min`
 
     let myList = []
     try {
@@ -757,7 +746,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       lastPublicSlotsMap = await fetchPublicSlotsForWeek(db, currentWeekStart)
     } catch (e) {
       console.error(e)
-      if (!isProbablyAdblockNetworkError(e)) showBanner("alert", "Impossible de charger les créneaux (publicSlots).")
+      if (!isProbablyAdblockNetworkError(e)) showBanner("alert", "Impossible de charger les créneaux.")
       lastPublicSlotsMap = new Map()
     }
 
@@ -772,7 +761,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         start.setMinutes(mins)
 
         const key = `${dateKey(start)}_${String(start.getHours()).padStart(2, "0")}${String(start.getMinutes()).padStart(2, "0")}`
-        const slotDoc = lastPublicSlotsMap.get(key)
+        const publicDoc = lastPublicSlotsMap.get(key)
 
         let status = "blocked"
         let disabled = true
@@ -784,17 +773,15 @@ document.addEventListener("DOMContentLoaded", async () => {
           disabled = true
           title = "Votre rendez-vous"
           label = "Mon RDV"
-        } else if (!slotDoc) {
+        } else if (!publicDoc) {
           status = "blocked"
           disabled = true
-          title = "Indisponible"
         } else {
-          const st = String(slotDoc.status || "busy").toLowerCase()
+          const st = String(publicDoc.status || "busy").toLowerCase()
 
           if (start < min48) {
             status = "blocked"
             disabled = true
-            title = "Indisponible"
           } else if (st === "free") {
             status = "free"
             disabled = false
@@ -803,12 +790,11 @@ document.addEventListener("DOMContentLoaded", async () => {
           } else {
             status = "blocked"
             disabled = true
-            title = "Indisponible"
           }
         }
 
         if (selectedSlot && selectedSlot.key === key) {
-          const stillFree = !!slotDoc && String(slotDoc.status || "").toLowerCase() === "free" && start >= min48
+          const stillFree = !!publicDoc && String(publicDoc.status || "").toLowerCase() === "free" && start >= min48
           if (!stillFree) {
             selectedSlot = null
           } else {
@@ -832,7 +818,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         const key = cell.getAttribute("data-slotkey")
         if (!key) return
 
-        const slotDoc = lastPublicSlotsMap.get(key)
+        const publicDoc = lastPublicSlotsMap.get(key)
 
         if (selectedSlot && selectedSlot.key === key) {
           selectedSlot = null
@@ -843,7 +829,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
 
         if (myApptKeys.has(key)) return
-        if (!slotDoc || String(slotDoc.status || "").toLowerCase() !== "free") return
+        if (!publicDoc || String(publicDoc.status || "").toLowerCase() !== "free") return
 
         const [dPart, hm] = key.split("_")
         const [yy, mo, dd] = dPart.split("-").map((x) => parseInt(x, 10))
@@ -859,13 +845,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         const end = addMinutesDate(start, CFG.slotMinutes)
 
-        selectedSlot = {
-          key,
-          startDate: start,
-          endDate: end,
-          slotId: slotDoc.id, // ✅ docId = slotId (ex: 20260217_0930)
-        }
-
+        selectedSlot = { key, startDate: start, endDate: end, slotId: publicDoc.id }
         const b = document.getElementById("btnBook")
         if (b) b.disabled = false
         await refreshCalendarAndAppointments(user)
@@ -931,17 +911,6 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
 
       const smart = collectSmartForm()
-      smart.devicesCount = String(smart.devicesCount || "").trim()
-      smart.powerKw = String(smart.powerKw || "").trim()
-      smart.note = String(smart.note || "").trim()
-      smart.addressControl = String(smart.addressControl || "").trim()
-      smart.controlTypeOther = String(smart.controlTypeOther || "").trim()
-      smart.region = String(smart.region || "").trim()
-      smart.chaufferie = String(smart.chaufferie || "").trim()
-      smart.pressure = String(smart.pressure || "").trim()
-      smart.photosLink = String(smart.photosLink || "").trim()
-      smart.photosAvailable = String(smart.photosAvailable || "Non").trim()
-
       const errs = validateSmartForm(smart)
       if (errs.length) {
         showBanner("alert", errs[0])
@@ -957,11 +926,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         await refreshCalendarAndAppointments(user)
       } catch (e) {
         console.error(e)
-        if (isProbablyAdblockNetworkError(e)) {
-          showBanner("warn", "Une extension (adblock) bloque des appels réseau.")
-        } else {
-          showBanner("alert", e?.message || "Réservation impossible. Le créneau vient peut-être d’être pris.")
-        }
+        if (isProbablyAdblockNetworkError(e)) showBanner("warn", "Une extension (adblock) bloque des appels réseau.")
+        else showBanner("alert", e?.message || "Réservation impossible.")
       } finally {
         if (btnBook) btnBook.disabled = !selectedSlot
       }
