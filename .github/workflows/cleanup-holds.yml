@@ -1,0 +1,52 @@
+name: Cleanup holds (every 10 minutes)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/10 * * * *"
+
+concurrency:
+  group: cleanup-holds
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node (with cache)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: tools/cleanup-holds/package-lock.json
+
+      - name: Google Auth (service account)
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+
+      - name: Install deps
+        working-directory: tools/cleanup-holds
+        run: npm ci
+
+      - name: Run cleanup
+        working-directory: tools/cleanup-holds
+        env:
+          FIREBASE_PROJECT_ID: "goffin-booking-web"
+          LIMIT: "500"
+        run: node sync.js
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### 🧹 Cleanup holds" >> $GITHUB_STEP_SUMMARY
+          echo "- Project: goffin-booking-web" >> $GITHUB_STEP_SUMMARY
+          echo "- Runs every 10 minutes" >> $GITHUB_STEP_SUMMARY
