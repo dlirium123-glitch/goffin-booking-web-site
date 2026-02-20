@@ -1,12 +1,8 @@
 // =======================================================
 // Goffin Booking — index.v3.js (PRO)
-// Étape 2: Calendrier pro + Formulaire intelligent + FIX permissions
-// - Le client voit: Libre / Indisponible / Mon RDV (pas Outlook / pas <48h)
-// - Lecture côté client: publicSlots + holds + bookings
-// - Réservation: création atomique (transaction):
-//   - holds (30 min) sur N créneaux consécutifs
-//   - bookings (pending) sur N créneaux (blocage long anti double booking)
-//   - appointments (pending) avec slotIds[]
+// Step4: Spark-only booking (publicSlots + holds + bookings)
+// - UI lit publicSlots (read-only) + holds (locks) + bookings (mes demandes)
+// - Le client N'ECRIT PAS dans publicSlots (sinon 403)
 // =======================================================
 const INDEX_VERSION = "v3-2026-02-18-PRO-step4"
 console.log("index.v3.js chargé ✅", INDEX_VERSION)
@@ -26,14 +22,16 @@ document.addEventListener("DOMContentLoaded", async () => {
     daysToShow: 5,
     startMinutes: 9 * 60 + 30,
     endMinutes: 17 * 60 + 30,
-    slotMinutes: 90,
-    appointmentMinutes: 60,
+    slotMinutes: 90,            // grille visible
+    appointmentMinutes: 60,     // info only
+    holdMinutes: 30,            // hold TTL
     weeksToShowLabel: "Semaine",
-    maxAppointmentsToShow: 12,
-    holdMinutes: 30,
-    maxSlotsPerRequest: 4,
+    maxBookingsToShow: 12
   }
 
+  // ------------------------------
+  // Utils
+  // ------------------------------
   function escapeHtml(s) {
     return String(s ?? "")
       .replaceAll("&", "&amp;")
@@ -116,6 +114,16 @@ document.addEventListener("DOMContentLoaded", async () => {
     return `${y}-${mo}-${da}`
   }
 
+  // slotId expected by rules: YYYYMMDD_HHMM
+  function slotIdFromDate(d) {
+    const y = String(d.getFullYear())
+    const mo = String(d.getMonth() + 1).padStart(2, "0")
+    const da = String(d.getDate()).padStart(2, "0")
+    const hh = String(d.getHours()).padStart(2, "0")
+    const mm = String(d.getMinutes()).padStart(2, "0")
+    return `${y}${mo}${da}_${hh}${mm}`
+  }
+
   function buildTimeRows() {
     const rows = []
     const lastStart = CFG.endMinutes - CFG.slotMinutes
@@ -137,10 +145,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     return msg.includes("ERR_BLOCKED_BY_CLIENT") || msg.includes("blocked by client")
   }
 
-  function normalizePhone(s) {
-    return String(s || "").trim()
-  }
-
   function showPanel(panelId) {
     ;["panelLogin", "panelSignup"].forEach((id) => {
       const el = document.getElementById(id)
@@ -149,6 +153,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     hideBanner()
   }
 
+  // ------------------------------
+  // Auth UI
+  // ------------------------------
   function renderAuth(extraWarningHtml = "") {
     right.innerHTML = `
       <div class="stepWrap">
@@ -212,90 +219,87 @@ document.addEventListener("DOMContentLoaded", async () => {
     const btnSignup = document.getElementById("btnSignup")
     const btnForgot = document.getElementById("btnForgot")
 
-    if (btnLogin) {
-      btnLogin.addEventListener("click", async () => {
-        hideBanner()
-        const email = (document.getElementById("loginEmail")?.value || "").trim().toLowerCase()
-        const pass = (document.getElementById("loginPass")?.value || "").trim()
+    btnLogin?.addEventListener("click", async () => {
+      hideBanner()
+      const email = (document.getElementById("loginEmail")?.value || "").trim().toLowerCase()
+      const pass = (document.getElementById("loginPass")?.value || "").trim()
 
-        if (!email || !pass) {
-          showBanner("alert", "Veuillez renseigner votre e-mail et votre mot de passe.")
-          return
-        }
+      if (!email || !pass) {
+        showBanner("alert", "Veuillez renseigner votre e-mail et votre mot de passe.")
+        return
+      }
 
-        try {
-          btnLogin.disabled = true
-          await auth.signInWithEmailAndPassword(email, pass)
-        } catch (err) {
-          console.error(err)
-          if (err.code === "auth/user-not-found") {
-            showBanner("alert", "Aucun compte n’existe pour cet e-mail. Veuillez créer un compte.")
-          } else if (err.code === "auth/wrong-password" || err.code === "auth/invalid-credential") {
-            showBanner("alert", "Mot de passe incorrect. Veuillez réessayer.")
-          } else {
-            showBanner("alert", "Connexion impossible. Veuillez réessayer.")
-          }
-        } finally {
-          btnLogin.disabled = false
+      try {
+        btnLogin.disabled = true
+        await auth.signInWithEmailAndPassword(email, pass)
+      } catch (err) {
+        console.error(err)
+        if (err.code === "auth/user-not-found") {
+          showBanner("alert", "Aucun compte n’existe pour cet e-mail. Veuillez créer un compte.")
+        } else if (err.code === "auth/wrong-password" || err.code === "auth/invalid-credential") {
+          showBanner("alert", "Mot de passe incorrect. Veuillez réessayer.")
+        } else {
+          showBanner("alert", "Connexion impossible. Veuillez réessayer.")
         }
-      })
-    }
+      } finally {
+        btnLogin.disabled = false
+      }
+    })
 
-    if (btnForgot) {
-      btnForgot.addEventListener("click", async () => {
-        hideBanner()
-        const email = (document.getElementById("loginEmail")?.value || "").trim().toLowerCase()
-        if (!email) {
-          showBanner("alert", "Veuillez d’abord saisir votre adresse e-mail.")
-          return
-        }
-        try {
-          btnForgot.disabled = true
-          await auth.sendPasswordResetEmail(email)
-          showBanner("ok", "E-mail envoyé ✅ Vérifiez votre boîte mail et vos indésirables.")
-        } catch (err) {
-          console.error(err)
-          showBanner("ok", "Si un compte existe pour cet e-mail, un message de réinitialisation a été envoyé ✅")
-        } finally {
-          btnForgot.disabled = false
-        }
-      })
-    }
+    btnForgot?.addEventListener("click", async () => {
+      hideBanner()
+      const email = (document.getElementById("loginEmail")?.value || "").trim().toLowerCase()
+      if (!email) {
+        showBanner("alert", "Veuillez d’abord saisir votre adresse e-mail.")
+        return
+      }
+      try {
+        btnForgot.disabled = true
+        await auth.sendPasswordResetEmail(email)
+        showBanner("ok", "E-mail envoyé ✅ Vérifiez votre boîte mail et vos indésirables.")
+      } catch (err) {
+        console.error(err)
+        showBanner("ok", "Si un compte existe pour cet e-mail, un message de réinitialisation a été envoyé ✅")
+      } finally {
+        btnForgot.disabled = false
+      }
+    })
 
-    if (btnSignup) {
-      btnSignup.addEventListener("click", async () => {
-        hideBanner()
-        const email = (document.getElementById("signupEmail")?.value || "").trim().toLowerCase()
-        const pass = (document.getElementById("signupPass")?.value || "").trim()
+    btnSignup?.addEventListener("click", async () => {
+      hideBanner()
+      const email = (document.getElementById("signupEmail")?.value || "").trim().toLowerCase()
+      const pass = (document.getElementById("signupPass")?.value || "").trim()
 
-        if (!email || !pass) {
-          showBanner("alert", "Veuillez renseigner votre e-mail et choisir un mot de passe.")
-          return
-        }
-        if (pass.length < 6) {
-          showBanner("alert", "Mot de passe : minimum 6 caractères.")
-          return
-        }
+      if (!email || !pass) {
+        showBanner("alert", "Veuillez renseigner votre e-mail et choisir un mot de passe.")
+        return
+      }
+      if (pass.length < 6) {
+        showBanner("alert", "Mot de passe : minimum 6 caractères.")
+        return
+      }
 
-        try {
-          btnSignup.disabled = true
-          await auth.createUserWithEmailAndPassword(email, pass)
-        } catch (err) {
-          console.error(err)
-          if (err.code === "auth/email-already-in-use") {
-            showBanner("alert", "Cet e-mail est déjà enregistré. Veuillez vous connecter.")
-          } else if (err.code === "auth/invalid-email") {
-            showBanner("alert", "Adresse e-mail invalide.")
-          } else {
-            showBanner("alert", "Création du compte impossible. Veuillez réessayer.")
-          }
-        } finally {
-          btnSignup.disabled = false
+      try {
+        btnSignup.disabled = true
+        await auth.createUserWithEmailAndPassword(email, pass)
+      } catch (err) {
+        console.error(err)
+        if (err.code === "auth/email-already-in-use") {
+          showBanner("alert", "Cet e-mail est déjà enregistré. Veuillez vous connecter.")
+        } else if (err.code === "auth/invalid-email") {
+          showBanner("alert", "Adresse e-mail invalide.")
+        } else {
+          showBanner("alert", "Création du compte impossible. Veuillez réessayer.")
         }
-      })
-    }
+      } finally {
+        btnSignup.disabled = false
+      }
+    })
   }
 
+  // ------------------------------
+  // Admin detection
+  // ------------------------------
   let __adminChecked = false
   let __isAdminCached = false
 
@@ -327,12 +331,13 @@ document.addEventListener("DOMContentLoaded", async () => {
       </div>
       <div class="ok" style="display:block">Compte administrateur détecté ✅ Redirection vers le panneau admin…</div>
     `
-    setTimeout(() => {
-      window.location.href = "/admin"
-    }, 250)
+    setTimeout(() => (window.location.href = "/admin"), 250)
     return true
   }
 
+  // ------------------------------
+  // Profile UI
+  // ------------------------------
   function renderProfileForm(userEmail) {
     right.innerHTML = `
       <div class="stepWrap">
@@ -374,6 +379,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     return errors
   }
 
+  function normalizePhone(s) {
+    return String(s || "").trim()
+  }
+
+  // ------------------------------
+  // Booking UI shell
+  // ------------------------------
   function renderBookingShell(userEmail) {
     right.innerHTML = `
       <div class="stepWrap">
@@ -383,14 +395,13 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       <div class="callout green">
         <strong>Profil OK ✅</strong>
-        <div class="muted">Choisissez un créneau libre. Les indisponibilités (Outlook, règles internes) sont masquées.</div>
+        <div class="muted">Choisissez un créneau libre. Les indisponibilités (Outlook / règles internes) sont masquées.</div>
       </div>
 
       <div class="calHeader">
         <div>
           <div class="calTitle" id="calTitle">${CFG.weeksToShowLabel}</div>
           <div class="tiny" id="calSub">Chargement…</div>
-          <div class="tiny muted" id="calHint"></div>
         </div>
         <div class="calNav">
           <button class="calBtn" id="calPrev" type="button">◀</button>
@@ -549,6 +560,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     grid.innerHTML = headRow + rowsHtml
   }
 
+  // ------------------------------
+  // Data fetch (PUBLIC)
+  // ------------------------------
   async function fetchPublicSlotsForWeek(db, weekStart) {
     const weekEnd = addDays(weekStart, 7)
     const tsStart = firebase.firestore.Timestamp.fromDate(weekStart)
@@ -582,54 +596,31 @@ document.addEventListener("DOMContentLoaded", async () => {
       .where("start", "<", tsEnd)
       .get()
 
+    const holds = new Map()
     const now = new Date()
-    const active = new Set()
+
     snap.forEach((doc) => {
       const d = doc.data() || {}
-      const expiresAt = d.expiresAt?.toDate?.() ? d.expiresAt.toDate() : null
       const start = d.start?.toDate?.() ? d.start.toDate() : null
-      if (!expiresAt || !start) return
+      const expiresAt = d.expiresAt?.toDate?.() ? d.expiresAt.toDate() : null
+      if (!start || !expiresAt) return
+
+      // ignore expired holds visually
       if (expiresAt <= now) return
+
       const key = `${dateKey(start)}_${String(start.getHours()).padStart(2, "0")}${String(start.getMinutes()).padStart(2, "0")}`
-      active.add(key)
+      holds.set(key, { id: doc.id, ...d })
     })
-    return active
+
+    return holds
   }
 
-  async function fetchBookingsForWeek(db, weekStart) {
-    const weekEnd = addDays(weekStart, 7)
-    const tsStart = firebase.firestore.Timestamp.fromDate(weekStart)
-    const tsEnd = firebase.firestore.Timestamp.fromDate(weekEnd)
-
+  async function fetchMyBookings(db, uid) {
     const snap = await db
       .collection("bookings")
-      .where("createdAt", ">=", tsStart)
-      .where("createdAt", "<", tsEnd)
-      .get()
-      .catch(() => null)
-
-    // fallback: si pas d’index / createdAt absent, on lit "bêtement" via publicSlots keys
-    // (Spark-friendly: on tolère, mais on garde bookings en docId slotId donc on peut faire autrement plus tard)
-    const set = new Set()
-    if (!snap) return set
-
-    snap.forEach((doc) => {
-      const d = doc.data() || {}
-      const st = String(d.status || "").toLowerCase()
-      if (st !== "pending" && st !== "validated") return
-      // docId = slotId, mais on n’a pas la dateKey facilement => on bloque via slotId->key au moment du merge (plus bas)
-      // ici on stocke docId brut, et on re-map en key si possible
-      set.add(doc.id)
-    })
-    return set
-  }
-
-  async function fetchMyAppointments(db, uid) {
-    const snap = await db
-      .collection("appointments")
       .where("uid", "==", uid)
       .orderBy("start", "desc")
-      .limit(CFG.maxAppointmentsToShow)
+      .limit(CFG.maxBookingsToShow)
       .get()
 
     const items = []
@@ -637,13 +628,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     return items
   }
 
-  function appointmentStartKey(a) {
+  function bookingStartKey(a) {
     const start = a.start?.toDate?.() ? a.start.toDate() : null
     if (!start) return null
     return `${dateKey(start)}_${String(start.getHours()).padStart(2, "0")}${String(start.getMinutes()).padStart(2, "0")}`
   }
 
-  function renderAppointments(list) {
+  function renderBookings(list) {
     const el = document.getElementById("apptList")
     if (!el) return
 
@@ -669,14 +660,11 @@ document.addEventListener("DOMContentLoaded", async () => {
         const addr = a.addressControl ? String(a.addressControl) : ""
         const types = Array.isArray(a.controlTypes) ? a.controlTypes.join(" + ") : ""
 
-        const slotCount = Array.isArray(a.slotIds) ? a.slotIds.length : 1
-        const durationTxt = slotCount > 1 ? ` • ${slotCount} créneaux` : ``
-
         return `
           <div class="apptCard">
             <div class="apptTop">
               <div>
-                <div style="font-weight:900">${escapeHtml(when)}${escapeHtml(durationTxt)}</div>
+                <div style="font-weight:900">${escapeHtml(when)}</div>
                 ${addr ? `<div class="muted" style="margin-top:4px">${escapeHtml(addr)}</div>` : ``}
                 ${types ? `<div class="tiny" style="margin-top:4px">${escapeHtml(types)}</div>` : ``}
               </div>
@@ -708,435 +696,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     return errors
   }
 
-  function getRequiredSlotsFromPayload(payload) {
-    const count = Array.isArray(payload.controlTypes) ? payload.controlTypes.length : 1
-    const normalized = Math.max(1, Math.min(CFG.maxSlotsPerRequest, count))
-    return normalized
-  }
-
-  function getConsecutiveKeys(baseKey, count) {
-    const parts = baseKey.split("_")
-    if (parts.length !== 2) return []
-    const [dPart, hm] = parts
-    const [yy, mo, dd] = dPart.split("-").map((x) => parseInt(x, 10))
-    const hh = parseInt(hm.slice(0, 2), 10)
-    const mm = parseInt(hm.slice(2, 4), 10)
-    const start = new Date(yy, mo - 1, dd, hh, mm, 0, 0)
-
-    const keys = []
-    for (let i = 0; i < count; i++) {
-      const d = addMinutesDate(start, i * CFG.slotMinutes)
-      const key = `${dateKey(d)}_${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}`
-      keys.push(key)
-    }
-    return keys
-  }
-
-  function keyToDate(key) {
-    const [dPart, hm] = key.split("_")
-    const [yy, mo, dd] = dPart.split("-").map((x) => parseInt(x, 10))
-    const hh = parseInt(hm.slice(0, 2), 10)
-    const mm = parseInt(hm.slice(2, 4), 10)
-    return new Date(yy, mo - 1, dd, hh, mm, 0, 0)
-  }
-
-  async function bookMultiSlots({ db, user, selection, smartPayload }) {
-    const apptRef = db.collection("appointments").doc()
-
-    const slotIds = selection.slotIds.slice(0)
-    const startTs = firebase.firestore.Timestamp.fromDate(selection.startDate)
-    const endTs = firebase.firestore.Timestamp.fromDate(selection.endDate)
-
-    const now = new Date()
-    const expiresAt = addMinutesDate(now, CFG.holdMinutes)
-
-    await db.runTransaction(async (tx) => {
-      // 1) Vérifier disponibilité des publicSlots + bookings existants
-      for (const slotId of slotIds) {
-        const pubRef = db.collection("publicSlots").doc(slotId)
-        const bookRef = db.collection("bookings").doc(slotId)
-        const holdRef = db.collection("holds").doc(slotId)
-
-        const [pubSnap, bookSnap, holdSnap] = await Promise.all([tx.get(pubRef), tx.get(bookRef), tx.get(holdRef)])
-
-        if (!pubSnap.exists) throw new Error("Créneau introuvable.")
-        const pub = pubSnap.data() || {}
-        const st = String(pub.status || "busy").toLowerCase()
-        if (st !== "free") throw new Error("Un des créneaux n’est plus disponible.")
-
-        if (bookSnap.exists) throw new Error("Un des créneaux vient d’être réservé par un autre client.")
-        if (holdSnap.exists) throw new Error("Un des créneaux est en cours de réservation (réessayez).")
-      }
-
-      // 2) Créer holds + bookings
-      slotIds.forEach((slotId) => {
-        const pubRef = db.collection("publicSlots").doc(slotId)
-        const holdRef = db.collection("holds").doc(slotId)
-        const bookRef = db.collection("bookings").doc(slotId)
-
-        tx.set(holdRef, {
-          start: pubRef, // placeholder not allowed, we must store real timestamps below
-        })
-      })
-    }).catch(async (e) => {
-      // On ne laisse pas de transaction half-done (Firestore tx est atomique)
-      throw e
-    })
-
-    // Firestore tx ne permet pas d’écrire en utilisant pubRef placeholder,
-    // on refait une transaction propre (lecture des timestamps publicSlots)
-    await db.runTransaction(async (tx) => {
-      const tsNow = firebase.firestore.FieldValue.serverTimestamp()
-      const expiresTs = firebase.firestore.Timestamp.fromDate(expiresAt)
-
-      const pubSnaps = []
-      for (const slotId of slotIds) {
-        const pubRef = db.collection("publicSlots").doc(slotId)
-        const pubSnap = await tx.get(pubRef)
-        if (!pubSnap.exists) throw new Error("Créneau introuvable.")
-        pubSnaps.push({ slotId, pubRef, pub: pubSnap.data() || {} })
-      }
-
-      for (const item of pubSnaps) {
-        const start = item.pub.start
-        const end = item.pub.end
-        if (!start || !end) throw new Error("Créneau invalide.")
-
-        const holdRef = db.collection("holds").doc(item.slotId)
-        const bookRef = db.collection("bookings").doc(item.slotId)
-
-        const bookSnap = await tx.get(bookRef)
-        if (bookSnap.exists) throw new Error("Un des créneaux vient d’être réservé.")
-
-        const holdSnap = await tx.get(holdRef)
-        if (holdSnap.exists) throw new Error("Un des créneaux est en cours de réservation.")
-
-        tx.set(holdRef, {
-          start,
-          end,
-          expiresAt: expiresTs,
-          createdAt: tsNow,
-        })
-
-        tx.set(bookRef, {
-          status: "pending",
-          appointmentId: apptRef.id,
-          createdAt: tsNow,
-          updatedAt: tsNow,
-        })
-      }
-
-      tx.set(apptRef, {
-        uid: user.uid,
-        email: (user.email || "").toLowerCase(),
-        start: startTs,
-        end: endTs,
-        status: "pending",
-        slotIds,
-        createdAt: tsNow,
-        updatedAt: tsNow,
-
-        addressControl: smartPayload.addressControl,
-        region: smartPayload.region || "",
-        chaufferie: smartPayload.chaufferie || "",
-        controlTypes: smartPayload.controlTypes || [],
-        controlTypeOther: smartPayload.controlTypeOther || "",
-        pressure: smartPayload.pressure || "",
-        devicesCount: smartPayload.devicesCount || "",
-        powerKw: smartPayload.powerKw || "",
-        photosAvailable: smartPayload.photosAvailable || "Non",
-        photosLink: smartPayload.photosLink || "",
-        note: smartPayload.note || "",
-      })
-    })
-  }
-
-  renderAuth()
-  setStatus(false)
-
-  const okFirebase = await waitForFirebase(10000)
-  if (!okFirebase) {
-    const warningHtml = `
-      <div class="warn" style="display:block">
-        ⚠️ Firebase n’est pas chargé. La connexion ne fonctionnera pas.
-        <div class="tiny" style="margin-top:6px">Vérifie que /__/firebase/init.js se charge bien.</div>
-      </div>
-    `
-    renderAuth(warningHtml)
-    return
-  }
-
-  const auth = firebase.auth()
-  const db = firebase.firestore()
-
-  try {
-    await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)
-  } catch {}
-
-  btnLogout.addEventListener("click", async () => {
-    await auth.signOut()
-  })
-
-  wireAuthHandlers(auth)
-
-  let currentWeekStart = startOfWeekMonday(new Date())
-  let selected = null
-  let lastPublicSlotsMap = new Map()
-  let activeHoldsKeys = new Set()
-  let bookingSlotIds = new Set()
-  let myApptKeys = new Set()
-  let mySelectedKeys = new Set()
-
-  function updateHintText(requiredSlots) {
-    const el = document.getElementById("calHint")
-    if (!el) return
-    const txt = requiredSlots > 1
-      ? `Durée estimée: ${requiredSlots} contrôles → ${requiredSlots} créneaux consécutifs (90 min chacun)`
-      : `Durée estimée: 1 contrôle → 1 créneau (90 min)`
-    el.textContent = txt
-  }
-
-  async function refreshCalendarAndAppointments(user) {
-    const timeRows = buildTimeRows()
-    const days = makeWeekDays(currentWeekStart)
-
-    const calSub = document.getElementById("calSub")
-    const calTitle = document.getElementById("calTitle")
-    if (calTitle) calTitle.textContent = `Semaine du ${days[0].toLocaleDateString("fr-BE")}`
-    if (calSub) calSub.textContent = `Créneaux: ${CFG.slotMinutes} min (contrôle 60 + trajet 30)`
-
-    let myList = []
-    try {
-      myList = await fetchMyAppointments(db, user.uid)
-      myApptKeys = new Set(
-        myList
-          .filter((a) => String(a.status || "").toLowerCase() !== "cancelled")
-          .map(appointmentStartKey)
-          .filter(Boolean)
-      )
-      renderAppointments(myList)
-    } catch (e) {
-      console.error(e)
-    }
-
-    try {
-      lastPublicSlotsMap = await fetchPublicSlotsForWeek(db, currentWeekStart)
-    } catch (e) {
-      console.error(e)
-      if (!isProbablyAdblockNetworkError(e)) showBanner("alert", "Impossible de charger les créneaux.")
-      lastPublicSlotsMap = new Map()
-    }
-
-    try {
-      activeHoldsKeys = await fetchHoldsForWeek(db, currentWeekStart)
-    } catch (e) {
-      console.error(e)
-      activeHoldsKeys = new Set()
-    }
-
-    // bookings: on ne peut pas toujours requêter proprement sans index,
-    // donc on le remap à partir des slotIds connus via publicSlots (docId)
-    bookingSlotIds = new Set()
-    try {
-      const raw = await fetchBookingsForWeek(db, currentWeekStart)
-      raw.forEach((id) => bookingSlotIds.add(id))
-    } catch (e) {
-      console.error(e)
-      bookingSlotIds = new Set()
-    }
-
-    // requiredSlots live (selon cases cochées)
-    const smart = collectSmartForm()
-    const requiredSlots = getRequiredSlotsFromPayload(smart)
-    updateHintText(requiredSlots)
-
-    const slotStateByKey = new Map()
-    const now = new Date()
-    const min48 = new Date(now.getTime() + 48 * 60 * 60 * 1000)
-
-    // rebuild selected keys if selected
-    mySelectedKeys = new Set(selected?.keys || [])
-
-    for (const day of days) {
-      for (const mins of timeRows) {
-        const start = new Date(day)
-        start.setHours(0, 0, 0, 0)
-        start.setMinutes(mins)
-
-        const key = `${dateKey(start)}_${String(start.getHours()).padStart(2, "0")}${String(start.getMinutes()).padStart(2, "0")}`
-        const pubDoc = lastPublicSlotsMap.get(key)
-
-        let status = "blocked"
-        let disabled = true
-        let title = "Indisponible"
-        let label = ""
-
-        if (myApptKeys.has(key)) {
-          status = "mine"
-          disabled = true
-          title = "Votre rendez-vous"
-          label = "Mon RDV"
-        } else if (!pubDoc) {
-          status = "blocked"
-          disabled = true
-          title = "Indisponible"
-        } else {
-          const st = String(pubDoc.status || "busy").toLowerCase()
-          const slotId = String(pubDoc.id || "")
-
-          const isBooked = slotId && bookingSlotIds.has(slotId)
-          const isHeld = activeHoldsKeys.has(key)
-
-          if (start < min48) {
-            status = "blocked"
-            disabled = true
-            title = "Indisponible"
-          } else if (isBooked) {
-            status = "blocked"
-            disabled = true
-            title = "Indisponible"
-          } else if (isHeld) {
-            status = "blocked"
-            disabled = true
-            title = "Créneau en cours de réservation"
-          } else if (st === "free") {
-            status = "free"
-            disabled = false
-            title = "Disponible"
-            label = "Libre"
-          } else {
-            status = "blocked"
-            disabled = true
-            title = "Indisponible"
-          }
-        }
-
-        if (mySelectedKeys.has(key)) {
-          status = "selected"
-          disabled = false
-          title = "Sélectionné"
-          label = "Libre"
-        }
-
-        slotStateByKey.set(key, { status, disabled, title, label })
-      }
-    }
-
-    renderCalendarGrid(days, timeRows, slotStateByKey)
-
-    document.querySelectorAll(".slot[data-slotkey]").forEach((cell) => {
-      cell.addEventListener("click", async () => {
-        hideBanner()
-
-        const key = cell.getAttribute("data-slotkey")
-        if (!key) return
-
-        // deselect if clicking on selected
-        if (selected && selected.startKey === key) {
-          selected = null
-          const b = document.getElementById("btnBook")
-          if (b) b.disabled = true
-          await refreshCalendarAndAppointments(user)
-          return
-        }
-
-        if (myApptKeys.has(key)) return
-
-        const pubDoc = lastPublicSlotsMap.get(key)
-        if (!pubDoc) return
-
-        const st = String(pubDoc.status || "busy").toLowerCase()
-        if (st !== "free") return
-
-        const baseStart = keyToDate(key)
-        const min48now = new Date(Date.now() + 48 * 60 * 60 * 1000)
-        if (baseStart < min48now) {
-          showBanner("warn", "Ce créneau n’est plus disponible.")
-          return
-        }
-
-        // requiredSlots computed from checkboxes
-        const smart = collectSmartForm()
-        const requiredSlots = getRequiredSlotsFromPayload(smart)
-        updateHintText(requiredSlots)
-
-        const keys = getConsecutiveKeys(key, requiredSlots)
-        if (!keys.length) return
-
-        // validate same day + inside grid hours
-        const day0 = keys[0].split("_")[0]
-        const sameDay = keys.every((k) => k.split("_")[0] === day0)
-        if (!sameDay) {
-          showBanner("warn", "Veuillez choisir un créneau plus tôt (créneaux consécutifs requis).")
-          return
-        }
-
-        // validate availability for all keys
-        const slotIds = []
-        for (const k of keys) {
-          const d = keyToDate(k)
-          if (d < min48now) {
-            showBanner("warn", "Un des créneaux est trop proche (<48h).")
-            return
-          }
-
-          const doc = lastPublicSlotsMap.get(k)
-          if (!doc || String(doc.status || "busy").toLowerCase() !== "free") {
-            showBanner("warn", "Les créneaux consécutifs ne sont pas tous disponibles.")
-            return
-          }
-
-          if (activeHoldsKeys.has(k)) {
-            showBanner("warn", "Un des créneaux est en cours de réservation. Réessayez.")
-            return
-          }
-
-          const sid = String(doc.id || "")
-          if (sid && bookingSlotIds.has(sid)) {
-            showBanner("warn", "Un des créneaux est déjà réservé.")
-            return
-          }
-
-          slotIds.push(sid)
-        }
-
-        const startDate = keyToDate(keys[0])
-        const endDate = addMinutesDate(startDate, requiredSlots * CFG.slotMinutes)
-
-        selected = { startKey: key, keys, slotIds, startDate, endDate }
-        const b = document.getElementById("btnBook")
-        if (b) b.disabled = false
-        await refreshCalendarAndAppointments(user)
-      })
-    })
-  }
-
-  async function bindCalendarNav(user) {
-    document.getElementById("calPrev")?.addEventListener("click", async () => {
-      currentWeekStart = addDays(currentWeekStart, -7)
-      selected = null
-      const b = document.getElementById("btnBook")
-      if (b) b.disabled = true
-      await refreshCalendarAndAppointments(user)
-    })
-
-    document.getElementById("calNext")?.addEventListener("click", async () => {
-      currentWeekStart = addDays(currentWeekStart, 7)
-      selected = null
-      const b = document.getElementById("btnBook")
-      if (b) b.disabled = true
-      await refreshCalendarAndAppointments(user)
-    })
-
-    document.getElementById("calToday")?.addEventListener("click", async () => {
-      currentWeekStart = startOfWeekMonday(new Date())
-      selected = null
-      const b = document.getElementById("btnBook")
-      if (b) b.disabled = true
-      await refreshCalendarAndAppointments(user)
-    })
-  }
-
   function collectSmartForm() {
     const addressControl = (document.getElementById("f_address")?.value || "").trim()
     const region = (document.getElementById("f_region")?.value || "").trim()
@@ -1158,15 +717,263 @@ document.addEventListener("DOMContentLoaded", async () => {
     return { addressControl, region, chaufferie, controlTypes, controlTypeOther, pressure, devicesCount, powerKw, photosAvailable, photosLink, note }
   }
 
-  function bindFormLiveRefresh(user) {
-    // recalcul slots needed live
-    document.querySelectorAll("#f_types input[type='checkbox']").forEach((el) => {
-      el.addEventListener("change", async () => {
-        selected = null
-        const b = document.getElementById("btnBook")
-        if (b) b.disabled = true
-        await refreshCalendarAndAppointments(user)
+  // ------------------------------
+  // Booking transaction (Spark-safe)
+  // - Create hold + booking with deterministic IDs (slotId)
+  // - Do NOT update publicSlots (read-only)
+  // ------------------------------
+  async function bookSlot(db, user, selected, smartPayload) {
+    const slotId = selected.slotId
+    const holdRef = db.collection("holds").doc(slotId)
+    const bookingRef = db.collection("bookings").doc(slotId)
+
+    const startTs = firebase.firestore.Timestamp.fromDate(selected.startDate)
+    const endTs = firebase.firestore.Timestamp.fromDate(selected.endDate)
+
+    const expiresAt = addMinutesDate(new Date(), CFG.holdMinutes)
+    const expiresAtTs = firebase.firestore.Timestamp.fromDate(expiresAt)
+
+    await db.runTransaction(async (tx) => {
+      // 1) Check hold does not exist
+      const holdSnap = await tx.get(holdRef)
+      if (holdSnap.exists) {
+        // if it's yours you could allow, but keep simple
+        throw new Error("Ce créneau est en cours de réservation par un autre client. Réessayez plus tard.")
+      }
+
+      // 2) Check booking does not exist
+      const bookingSnap = await tx.get(bookingRef)
+      if (bookingSnap.exists) {
+        throw new Error("Ce créneau n’est plus disponible.")
+      }
+
+      // 3) Create hold
+      tx.set(holdRef, {
+        uid: user.uid,
+        status: "hold",
+        slotId,
+        start: startTs,
+        end: endTs,
+        expiresAt: expiresAtTs,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
       })
+
+      // 4) Create booking (pending)
+      tx.set(bookingRef, {
+        uid: user.uid,
+        email: (user.email || "").toLowerCase(),
+        slotId,
+        start: startTs,
+        end: endTs,
+        status: "pending",
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+
+        addressControl: smartPayload.addressControl,
+        region: smartPayload.region || "",
+        chaufferie: smartPayload.chaufferie || "",
+        controlTypes: smartPayload.controlTypes || [],
+        controlTypeOther: smartPayload.controlTypeOther || "",
+        pressure: smartPayload.pressure || "",
+        devicesCount: smartPayload.devicesCount || "",
+        powerKw: smartPayload.powerKw || "",
+        photosAvailable: smartPayload.photosAvailable || "Non",
+        photosLink: smartPayload.photosLink || "",
+        note: smartPayload.note || ""
+      })
+    })
+  }
+
+  // ------------------------------
+  // Calendar logic
+  // ------------------------------
+  let currentWeekStart = startOfWeekMonday(new Date())
+  let selectedSlot = null
+  let publicSlotsMap = new Map()
+  let holdsMap = new Map()
+  let myBookingKeys = new Set()
+
+  async function refreshCalendarAndBookings(user) {
+    const timeRows = buildTimeRows()
+    const days = makeWeekDays(currentWeekStart)
+
+    const calSub = document.getElementById("calSub")
+    const calTitle = document.getElementById("calTitle")
+    if (calTitle) calTitle.textContent = `Semaine du ${days[0].toLocaleDateString("fr-BE")}`
+    if (calSub) calSub.textContent = `Créneaux: ${CFG.slotMinutes} min (contrôle ${CFG.appointmentMinutes} + trajet)`
+
+    // my bookings
+    let myList = []
+    try {
+      myList = await fetchMyBookings(db, user.uid)
+      myBookingKeys = new Set(
+        myList
+          .filter((a) => String(a.status || "").toLowerCase() !== "cancelled")
+          .map(bookingStartKey)
+          .filter(Boolean)
+      )
+      renderBookings(myList)
+    } catch (e) {
+      console.error(e)
+    }
+
+    // public slots
+    try {
+      publicSlotsMap = await fetchPublicSlotsForWeek(db, currentWeekStart)
+    } catch (e) {
+      console.error(e)
+      if (!isProbablyAdblockNetworkError(e)) showBanner("alert", "Impossible de charger les créneaux.")
+      publicSlotsMap = new Map()
+    }
+
+    // holds
+    try {
+      holdsMap = await fetchHoldsForWeek(db, currentWeekStart)
+    } catch (e) {
+      console.error(e)
+      holdsMap = new Map()
+    }
+
+    const slotStateByKey = new Map()
+    const now = new Date()
+    const min48 = new Date(now.getTime() + 48 * 60 * 60 * 1000)
+
+    for (const day of days) {
+      for (const mins of timeRows) {
+        const start = new Date(day)
+        start.setHours(0, 0, 0, 0)
+        start.setMinutes(mins)
+
+        const key = `${dateKey(start)}_${String(start.getHours()).padStart(2, "0")}${String(start.getMinutes()).padStart(2, "0")}`
+        const pub = publicSlotsMap.get(key)
+        const hold = holdsMap.get(key)
+
+        let status = "blocked"
+        let disabled = true
+        let title = "Indisponible"
+        let label = ""
+
+        if (myBookingKeys.has(key)) {
+          status = "mine"
+          disabled = true
+          title = "Votre demande"
+          label = "Mon RDV"
+        } else if (start < min48) {
+          status = "blocked"
+          disabled = true
+          title = "Indisponible"
+        } else if (!pub) {
+          status = "blocked"
+          disabled = true
+          title = "Indisponible"
+        } else {
+          const st = String(pub.status || "busy").toLowerCase()
+
+          // If another client holds => blocked
+          if (hold && String(hold.uid || "") !== String(user.uid || "")) {
+            status = "blocked"
+            disabled = true
+            title = "Indisponible"
+          } else if (st === "free") {
+            status = "free"
+            disabled = false
+            title = "Disponible"
+            label = "Libre"
+          } else {
+            status = "blocked"
+            disabled = true
+            title = "Indisponible"
+          }
+        }
+
+        if (selectedSlot && selectedSlot.key === key) {
+          const stillFree = !!pub && String(pub.status || "").toLowerCase() === "free" && start >= min48 && !hold
+          if (!stillFree) {
+            selectedSlot = null
+          } else {
+            status = "selected"
+            disabled = false
+            title = "Sélectionné"
+            label = "Libre"
+          }
+        }
+
+        slotStateByKey.set(key, { status, disabled, title, label })
+      }
+    }
+
+    renderCalendarGrid(days, timeRows, slotStateByKey)
+
+    document.querySelectorAll(".slot[data-slotkey]").forEach((cell) => {
+      cell.addEventListener("click", async () => {
+        hideBanner()
+
+        const key = cell.getAttribute("data-slotkey")
+        if (!key) return
+
+        // toggle off
+        if (selectedSlot && selectedSlot.key === key) {
+          selectedSlot = null
+          const b = document.getElementById("btnBook")
+          if (b) b.disabled = true
+          await refreshCalendarAndBookings(user)
+          return
+        }
+
+        if (myBookingKeys.has(key)) return
+
+        const pub = publicSlotsMap.get(key)
+        if (!pub || String(pub.status || "").toLowerCase() !== "free") return
+
+        const hold = holdsMap.get(key)
+        if (hold && String(hold.uid || "") !== String(user.uid || "")) return
+
+        const [dPart, hm] = key.split("_")
+        const [yy, mo, dd] = dPart.split("-").map((x) => parseInt(x, 10))
+        const hh = parseInt(hm.slice(0, 2), 10)
+        const mm = parseInt(hm.slice(2, 4), 10)
+        const start = new Date(yy, mo - 1, dd, hh, mm, 0, 0)
+
+        const min48now = new Date(Date.now() + 48 * 60 * 60 * 1000)
+        if (start < min48now) {
+          showBanner("warn", "Ce créneau n’est plus disponible.")
+          return
+        }
+
+        const end = addMinutesDate(start, CFG.slotMinutes)
+
+        const slotId = slotIdFromDate(start) // YYYYMMDD_HHMM
+        selectedSlot = { key, startDate: start, endDate: end, slotId }
+        const b = document.getElementById("btnBook")
+        if (b) b.disabled = false
+        await refreshCalendarAndBookings(user)
+      })
+    })
+  }
+
+  async function bindCalendarNav(user) {
+    document.getElementById("calPrev")?.addEventListener("click", async () => {
+      currentWeekStart = addDays(currentWeekStart, -7)
+      selectedSlot = null
+      const b = document.getElementById("btnBook")
+      if (b) b.disabled = true
+      await refreshCalendarAndBookings(user)
+    })
+
+    document.getElementById("calNext")?.addEventListener("click", async () => {
+      currentWeekStart = addDays(currentWeekStart, 7)
+      selectedSlot = null
+      const b = document.getElementById("btnBook")
+      if (b) b.disabled = true
+      await refreshCalendarAndBookings(user)
+    })
+
+    document.getElementById("calToday")?.addEventListener("click", async () => {
+      currentWeekStart = startOfWeekMonday(new Date())
+      selectedSlot = null
+      const b = document.getElementById("btnBook")
+      if (b) b.disabled = true
+      await refreshCalendarAndBookings(user)
     })
   }
 
@@ -1175,7 +982,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       hideBanner()
       const btnBook = document.getElementById("btnBook")
 
-      if (!selected) {
+      if (!selectedSlot) {
         showBanner("alert", "Veuillez sélectionner un créneau libre.")
         return
       }
@@ -1198,22 +1005,13 @@ document.addEventListener("DOMContentLoaded", async () => {
         return
       }
 
-      const requiredSlots = getRequiredSlotsFromPayload(smart)
-      if (selected.slotIds.length !== requiredSlots) {
-        showBanner("warn", "Sélection invalide. Re-sélectionnez un créneau.")
-        selected = null
-        if (btnBook) btnBook.disabled = true
-        await refreshCalendarAndAppointments(user)
-        return
-      }
-
       try {
         if (btnBook) btnBook.disabled = true
-        await bookMultiSlots({ db, user, selection: selected, smartPayload: smart })
+        await bookSlot(db, user, selectedSlot, smart)
         showBanner("ok", "Demande envoyée ✅ (en attente de validation)")
-        selected = null
+        selectedSlot = null
         if (btnBook) btnBook.disabled = true
-        await refreshCalendarAndAppointments(user)
+        await refreshCalendarAndBookings(user)
       } catch (e) {
         console.error(e)
         if (isProbablyAdblockNetworkError(e)) {
@@ -1222,11 +1020,14 @@ document.addEventListener("DOMContentLoaded", async () => {
           showBanner("alert", e?.message || "Réservation impossible. Le créneau vient peut-être d’être pris.")
         }
       } finally {
-        if (btnBook) btnBook.disabled = !selected
+        if (btnBook) btnBook.disabled = !selectedSlot
       }
     })
   }
 
+  // ------------------------------
+  // Profile -> Booking
+  // ------------------------------
   async function ensureProfileThenBooking(user) {
     const didRedirect = await redirectIfAdmin(db, user)
     if (didRedirect) return
@@ -1261,7 +1062,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           phone: normalizePhone(document.getElementById("p_phone")?.value || ""),
           hqAddress: (document.getElementById("p_hq")?.value || "").trim(),
           status: "ok",
-          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
         }
 
         const errs = validateProfile(data)
@@ -1278,14 +1079,13 @@ document.addEventListener("DOMContentLoaded", async () => {
           )
 
           renderBookingShell(user.email || "")
-          selected = null
+          selectedSlot = null
           const b = document.getElementById("btnBook")
           if (b) b.disabled = true
 
           await bindCalendarNav(user)
           await bindBookButton(user)
-          bindFormLiveRefresh(user)
-          await refreshCalendarAndAppointments(user)
+          await refreshCalendarAndBookings(user)
         } catch (e) {
           console.error(e)
           if (!isProbablyAdblockNetworkError(e)) showBanner("alert", "Impossible d’enregistrer le profil (rules / réseau).")
@@ -1299,15 +1099,45 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     renderBookingShell(user.email || "")
-    selected = null
+    selectedSlot = null
     const b = document.getElementById("btnBook")
     if (b) b.disabled = true
 
     await bindCalendarNav(user)
     await bindBookButton(user)
-    bindFormLiveRefresh(user)
-    await refreshCalendarAndAppointments(user)
+    await refreshCalendarAndBookings(user)
   }
+
+  // ------------------------------
+  // Boot
+  // ------------------------------
+  renderAuth()
+  setStatus(false)
+
+  const okFirebase = await waitForFirebase(10000)
+  if (!okFirebase) {
+    const warningHtml = `
+      <div class="warn" style="display:block">
+        ⚠️ Firebase n’est pas chargé. La connexion ne fonctionnera pas.
+        <div class="tiny" style="margin-top:6px">Vérifie que /__/firebase/init.js se charge bien.</div>
+      </div>
+    `
+    renderAuth(warningHtml)
+    return
+  }
+
+  const auth = firebase.auth()
+  const db = firebase.firestore()
+
+  try {
+    await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)
+  } catch {}
+
+  btnLogout.addEventListener("click", async () => {
+    await auth.signOut()
+  })
+
+  wireAuthHandlers(auth)
 
   auth.onAuthStateChanged(async (user) => {
     setStatus(!!user)
