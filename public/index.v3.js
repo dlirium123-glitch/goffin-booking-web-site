@@ -1,12 +1,13 @@
 // =======================================================
 // Goffin Booking — index.v3.js (PRO)
-// Step5: Spark-only booking (publicSlots + holds + bookings) + MULTI-SLOTS
+// Step6: Spark-only booking (publicSlots + holds + bookings) + MULTI-SLOTS
 // - UI lit publicSlots (read-only) + holds (locks) + bookings (mes demandes)
 // - Client n'écrit PAS dans publicSlots (sinon 403)
-// - Multi-créneaux: nb techniques cochées => nb slots 90 min consécutifs
+// - Multi: durée = nbTech*60 + 30 (trajet 1x), slots = ceil(durée / 90)
 // - "Mes demandes" regroupées par requestId (1 carte par demande)
+// - Transaction Spark-safe: on ne lit PAS bookings/{slotId} (sinon 403 si doc absent)
 // =======================================================
-const INDEX_VERSION = "v3-2026-02-20-PRO-step5"
+const INDEX_VERSION = "v3-2026-02-21-PRO-step6"
 console.log("index.v3.js chargé ✅", INDEX_VERSION)
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -28,16 +29,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     startMinutes: 9 * 60 + 30,
     endMinutes: 17 * 60 + 30,
 
-    // 1 technique = 1 slot (simple & robuste)
-    // 60 min contrôle + 30 min trajet => slot = 90 min
-    slotMinutes: 90,
+    slotMinutes: 90, // grille
+    controlMinutes: 60, // 1 technique = 60
+    travelMinutes: 30, // trajet 1x par demande
 
-    // info UI
-    appointmentMinutes: 60,
-
-    // hold TTL
-    holdMinutes: 30,
-
+    holdMinutes: 30, // hold TTL
     weeksToShowLabel: "Semaine",
     maxBookingsToShow: 40, // on groupe ensuite par requestId
   }
@@ -150,7 +146,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   function dayLabel(d) {
     const names = ["Dim", "Lun", "Mar", "Mer", "Jeu", "Ven", "Sam"]
-    return `${names[d.getDay()]} ${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`
+    return `${names[d.getDay()]} ${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(
+      2,
+      "0"
+    )}`
   }
 
   function isProbablyAdblockNetworkError(err) {
@@ -175,7 +174,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   function keyFromStartDate(start) {
-    return `${dateKey(start)}_${String(start.getHours()).padStart(2, "0")}${String(start.getMinutes()).padStart(2, "0")}`
+    return `${dateKey(start)}_${String(start.getHours()).padStart(2, "0")}${String(start.getMinutes()).padStart(
+      2,
+      "0"
+    )}`
   }
 
   function parseKeyToDate(key) {
@@ -186,6 +188,22 @@ document.addEventListener("DOMContentLoaded", async () => {
     const mm = parseInt(hm.slice(2, 4), 10)
     const dt = new Date(yy, mo - 1, dd, hh, mm, 0, 0)
     return Number.isNaN(dt.getTime()) ? null : dt
+  }
+
+  function computeWantedSlotsCountFromForm() {
+    // Durée totale = nbTech*60 + 30 (trajet 1x)
+    const checked = document.querySelectorAll("#f_types input[type='checkbox']:checked")
+    const nbTech = Math.max(1, checked ? checked.length : 0)
+    const total = nbTech * CFG.controlMinutes + CFG.travelMinutes
+    return Math.max(1, Math.ceil(total / CFG.slotMinutes))
+  }
+
+  function computeCalSubLabel() {
+    const checked = document.querySelectorAll("#f_types input[type='checkbox']:checked")
+    const nbTech = Math.max(1, checked ? checked.length : 0)
+    const total = nbTech * CFG.controlMinutes + CFG.travelMinutes
+    const slots = Math.max(1, Math.ceil(total / CFG.slotMinutes))
+    return `Créneaux: ${CFG.slotMinutes} min • Techniques: ${nbTech} • Durée calculée: ${total} min • Slots réservés: ${slots}`
   }
 
   // =====================================================
@@ -488,6 +506,10 @@ document.addEventListener("DOMContentLoaded", async () => {
         <label class="chk"><input type="checkbox" value="Autre" id="f_type_other_chk"/> Autre</label>
       </div>
 
+      <div class="tiny muted" style="margin-top:6px">
+        Durée = nb techniques × 60 min + 30 min (trajet 1x). La réservation se fait en slots de 90 min.
+      </div>
+
       <label class="label">Autre (si coché)</label>
       <input id="f_type_other" placeholder="Ex: contrôle spécifique, réception après travaux, …" />
 
@@ -568,20 +590,18 @@ document.addEventListener("DOMContentLoaded", async () => {
 
             const classes = ["calCell", "slot"]
             if (st.status === "free") classes.push("free")
-            if (st.status === "blocked") classes.push("blocked")
+            else classes.push("blocked")
             if (st.status === "mine") classes.push("mine")
-            if (st.disabled) classes.push("disabled")
-
-            // multi-selection highlight
             if (selectedKeysSet && selectedKeysSet.has(key)) classes.push("selected")
 
-            const inside = st.label ? `<span class="slotPill">${escapeHtml(st.label)}</span>` : ""
+            const title = escapeHtml(st.title || "")
+            const label = escapeHtml(st.label || "")
 
-            return `
-              <div class="${classes.join(" ")}" data-slotkey="${escapeHtml(key)}" title="${escapeHtml(st.title || "")}">
-                ${inside}
-              </div>
-            `
+            return `<button class="${classes.join(" ")}" data-key="${escapeHtml(key)}" type="button" ${
+              st.disabled ? "disabled" : ""
+            } title="${title}">
+              ${label}
+            </button>`
           })
           .join("")
 
@@ -593,755 +613,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   // =====================================================
-  // Data fetch (PUBLIC)
+  // Firebase init
   // =====================================================
-  async function fetchPublicSlotsForWeek(db, weekStart) {
-    const weekEnd = addDays(weekStart, 7)
-    const tsStart = firebase.firestore.Timestamp.fromDate(weekStart)
-    const tsEnd = firebase.firestore.Timestamp.fromDate(weekEnd)
-
-    const snap = await db
-      .collection("publicSlots")
-      .where("start", ">=", tsStart)
-      .where("start", "<", tsEnd)
-      .get()
-
-    const map = new Map()
-    snap.forEach((doc) => {
-      const d = doc.data()
-      const start = d.start?.toDate?.() ? d.start.toDate() : null
-      if (!start) return
-      const key = keyFromStartDate(start)
-      map.set(key, { id: doc.id, ...d })
-    })
-    return map
-  }
-
-  async function fetchHoldsForWeek(db, weekStart) {
-    const weekEnd = addDays(weekStart, 7)
-    const tsStart = firebase.firestore.Timestamp.fromDate(weekStart)
-    const tsEnd = firebase.firestore.Timestamp.fromDate(weekEnd)
-
-    const snap = await db
-      .collection("holds")
-      .where("start", ">=", tsStart)
-      .where("start", "<", tsEnd)
-      .get()
-
-    const holds = new Map()
-    const now = new Date()
-
-    snap.forEach((doc) => {
-      const d = doc.data() || {}
-      const start = d.start?.toDate?.() ? d.start.toDate() : null
-      const expiresAt = d.expiresAt?.toDate?.() ? d.expiresAt.toDate() : null
-      if (!start || !expiresAt) return
-      if (expiresAt <= now) return // ignore expired visually
-
-      holds.set(keyFromStartDate(start), { id: doc.id, ...d })
-    })
-
-    return holds
-  }
-
-  // IMPORTANT: no orderBy => no composite index needed
-  async function fetchMyBookings(db, uid) {
-    const snap = await db
-      .collection("bookings")
-      .where("uid", "==", uid)
-      .limit(CFG.maxBookingsToShow)
-      .get()
-
-    const items = []
-    snap.forEach((doc) => items.push({ id: doc.id, ...doc.data() }))
-
-    // sort client-side
-    items.sort((a, b) => {
-      const ta = a.start?.toDate?.() ? a.start.toDate().getTime() : 0
-      const tb = b.start?.toDate?.() ? b.start.toDate().getTime() : 0
-      return tb - ta
-    })
-
-    return items
-  }
-
-  // =====================================================
-  // Grouping (1 card per requestId)
-  // =====================================================
-  function groupBookingsByRequestId(list) {
-    const by = new Map()
-    for (const b of list) {
-      const rid = String(b.requestId || b.id || "")
-      if (!rid) continue
-      if (!by.has(rid)) by.set(rid, [])
-      by.get(rid).push(b)
-    }
-
-    // sort each group by start asc
-    for (const [rid, arr] of by.entries()) {
-      arr.sort((a, b) => {
-        const ta = a.start?.toDate?.() ? a.start.toDate().getTime() : 0
-        const tb = b.start?.toDate?.() ? b.start.toDate().getTime() : 0
-        return ta - tb
-      })
-      by.set(rid, arr)
-    }
-
-    // build summary cards sorted by first start desc
-    const groups = Array.from(by.entries()).map(([rid, arr]) => {
-      const first = arr[0]
-      const firstStart = first?.start?.toDate?.() ? first.start.toDate() : null
-      return { requestId: rid, slots: arr, firstStart }
-    })
-
-    groups.sort((a, b) => {
-      const ta = a.firstStart ? a.firstStart.getTime() : 0
-      const tb = b.firstStart ? b.firstStart.getTime() : 0
-      return tb - ta
-    })
-
-    return groups
-  }
-
-  function renderBookings(list) {
-    const el = document.getElementById("apptList")
-    if (!el) return
-
-    if (!list.length) {
-      el.innerHTML = `<div class="muted">Aucune demande pour l’instant.</div>`
-      return
-    }
-
-    const groups = groupBookingsByRequestId(list)
-
-    el.innerHTML = groups
-      .map((g) => {
-        const slots = g.slots || []
-        const first = slots[0] || {}
-        const st = String(first.status || "pending").toLowerCase()
-        const badgeClass =
-          st === "pending" ? "pending" :
-          st === "validated" ? "validated" :
-          st === "refused" ? "refused" :
-          st === "cancelled" ? "cancelled" : "pending"
-
-        const start = first.start?.toDate?.() ? first.start.toDate() : null
-        const when = start
-          ? `${dayLabel(start)} • ${String(start.getHours()).padStart(2, "0")}:${String(start.getMinutes()).padStart(2, "0")}`
-          : "(date inconnue)"
-
-        const addr = first.addressControl ? String(first.addressControl) : ""
-        const types = Array.isArray(first.controlTypes) ? first.controlTypes.join(" + ") : ""
-        const count = slots.length
-        const infoSlots = count > 1 ? ` • ${count} créneaux` : ""
-
-        return `
-          <div class="apptCard">
-            <div class="apptTop">
-              <div>
-                <div style="font-weight:900">${escapeHtml(when)}${escapeHtml(infoSlots)}</div>
-                ${addr ? `<div class="muted" style="margin-top:4px">${escapeHtml(addr)}</div>` : ``}
-                ${types ? `<div class="tiny" style="margin-top:4px">${escapeHtml(types)}</div>` : ``}
-              </div>
-              <div class="badge ${badgeClass}">${escapeHtml(st === "pending" ? "En attente" : st)}</div>
-            </div>
-          </div>
-        `
-      })
-      .join("")
-  }
-
-  // =====================================================
-  // Smart form
-  // =====================================================
-  function validateSmartForm(payload) {
-    const errors = []
-
-    if (!payload.addressControl || payload.addressControl.length < 8) {
-      errors.push("Veuillez indiquer l’adresse du contrôle (Rue, n°, CP, Ville).")
-    }
-
-    if (!payload.controlTypes || !payload.controlTypes.length) {
-      errors.push("Veuillez sélectionner au moins 1 type de contrôle.")
-    }
-
-    if (payload.controlTypes.includes("Autre")) {
-      if (!payload.controlTypeOther || payload.controlTypeOther.length < 3) {
-        errors.push("Veuillez préciser le type “Autre”.")
-      }
-    }
-
-    return errors
-  }
-
-  function collectSmartForm() {
-    const addressControl = (document.getElementById("f_address")?.value || "").trim()
-    const region = (document.getElementById("f_region")?.value || "").trim()
-    const chaufferie = (document.getElementById("f_chaufferie")?.value || "").trim()
-
-    const controlTypes = []
-    document.querySelectorAll("#f_types input[type='checkbox']:checked").forEach((el) => {
-      controlTypes.push(String(el.value))
-    })
-
-    const controlTypeOther = (document.getElementById("f_type_other")?.value || "").trim()
-    const pressure = (document.getElementById("f_pressure")?.value || "").trim()
-    const devicesCount = (document.getElementById("f_devices")?.value || "").trim()
-    const powerKw = (document.getElementById("f_power")?.value || "").trim()
-    const photosAvailable = (document.getElementById("f_photos")?.value || "Non").trim()
-    const photosLink = (document.getElementById("f_photos_link")?.value || "").trim()
-    const note = (document.getElementById("f_note")?.value || "").trim()
-
-    return { addressControl, region, chaufferie, controlTypes, controlTypeOther, pressure, devicesCount, powerKw, photosAvailable, photosLink, note }
-  }
-
-  function getWantedSlotsCountFromForm() {
-    // simple: 1 technique = 1 slot
-    const checked = document.querySelectorAll("#f_types input[type='checkbox']:checked")
-    const n = checked ? checked.length : 0
-    return Math.max(1, n)
-  }
-
-  // =====================================================
-  // Booking transaction (Spark-safe) — MULTI-SLOTS
-  // - Create holds + bookings for N consecutive slots
-  // - Do NOT update publicSlots
-  // - Deterministic doc id = slotId for each slot
-  // - Group with requestId
-  // =====================================================
-  async function bookMultiSlots(db, user, startDate, slotsCount, smartPayload) {
-    const requestId = `REQ_${user.uid.slice(0, 6)}_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`
-
-    const slotStarts = []
-    for (let i = 0; i < slotsCount; i++) {
-      slotStarts.push(addMinutesDate(startDate, i * CFG.slotMinutes))
-    }
-
-    const now = new Date()
-    const expiresAt = addMinutesDate(now, CFG.holdMinutes)
-    const expiresAtTs = firebase.firestore.Timestamp.fromDate(expiresAt)
-
-    await db.runTransaction(async (tx) => {
-      // pre-check all holds/bookings are free
-      for (let i = 0; i < slotStarts.length; i++) {
-        const s = slotStarts[i]
-        const slotId = slotIdFromDate(s)
-
-        const holdRef = db.collection("holds").doc(slotId)
-        const bookingRef = db.collection("bookings").doc(slotId)
-
-        const holdSnap = await tx.get(holdRef)
-        if (holdSnap.exists) {
-          throw new Error("Un des créneaux est en cours de réservation par un autre client. Réessayez.")
-        }
-
-        const bookingSnap = await tx.get(bookingRef)
-        if (bookingSnap.exists) {
-          throw new Error("Un des créneaux n’est plus disponible.")
-        }
-      }
-
-      // write all holds + bookings
-      for (let i = 0; i < slotStarts.length; i++) {
-        const s = slotStarts[i]
-        const e = addMinutesDate(s, CFG.slotMinutes)
-        const slotId = slotIdFromDate(s)
-
-        const holdRef = db.collection("holds").doc(slotId)
-        const bookingRef = db.collection("bookings").doc(slotId)
-
-        const startTs = firebase.firestore.Timestamp.fromDate(s)
-        const endTs = firebase.firestore.Timestamp.fromDate(e)
-
-        // hold
-        tx.set(holdRef, {
-          uid: user.uid,
-          status: "hold",
-          slotId,
-          start: startTs,
-          end: endTs,
-          expiresAt: expiresAtTs,
-          requestId,
-          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-        })
-
-        // booking
-        tx.set(bookingRef, {
-          uid: user.uid,
-          email: (user.email || "").toLowerCase(),
-          slotId,
-          start: startTs,
-          end: endTs,
-          status: "pending",
-          requestId,
-          slotIndex: i + 1,
-          totalSlots: slotStarts.length,
-
-          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-
-          addressControl: smartPayload.addressControl,
-          region: smartPayload.region || "",
-          chaufferie: smartPayload.chaufferie || "",
-          controlTypes: smartPayload.controlTypes || [],
-          controlTypeOther: smartPayload.controlTypeOther || "",
-          pressure: smartPayload.pressure || "",
-          devicesCount: smartPayload.devicesCount || "",
-          powerKw: smartPayload.powerKw || "",
-          photosAvailable: smartPayload.photosAvailable || "Non",
-          photosLink: smartPayload.photosLink || "",
-          note: smartPayload.note || "",
-        })
-      }
-    })
-  }
-
-  // =====================================================
-  // Calendar state
-  // =====================================================
-  let currentWeekStart = startOfWeekMonday(new Date())
-  let publicSlotsMap = new Map()
-  let holdsMap = new Map()
-
-  // selection: base start key + computed range keys
-  let selectedStartKey = null
-  let selectedRangeKeys = new Set()
-
-  // for "mine"
-  let myBookings = []
-  let myBookingKeys = new Set()
-
-  function rebuildSelectedRangeKeys() {
-    selectedRangeKeys = new Set()
-
-    if (!selectedStartKey) return
-    const startDate = parseKeyToDate(selectedStartKey)
-    if (!startDate) return
-
-    const wanted = getWantedSlotsCountFromForm()
-
-    for (let i = 0; i < wanted; i++) {
-      const s = addMinutesDate(startDate, i * CFG.slotMinutes)
-      selectedRangeKeys.add(keyFromStartDate(s))
-    }
-  }
-
-  function computeCalSubLabel() {
-    const n = getWantedSlotsCountFromForm()
-    const totalMin = n * CFG.slotMinutes
-    return `Créneaux: ${CFG.slotMinutes} min • Techniques: ${n} • Durée estimée: ${totalMin} min`
-  }
-
-  function isKeySelectableForUser(user, key) {
-    const start = parseKeyToDate(key)
-    if (!start) return false
-
-    const min48 = new Date(Date.now() + 48 * 60 * 60 * 1000)
-    if (start < min48) return false
-
-    const pub = publicSlotsMap.get(key)
-    if (!pub) return false
-    if (String(pub.status || "busy").toLowerCase() !== "free") return false
-
-    const hold = holdsMap.get(key)
-    if (hold && String(hold.uid || "") !== String(user.uid || "")) return false
-
-    // if already mine => not selectable
-    if (myBookingKeys.has(key)) return false
-
-    return true
-  }
-
-  function canSelectRange(user, startKey, slotsCount) {
-    const startDate = parseKeyToDate(startKey)
-    if (!startDate) return { ok: false, reason: "Date invalide." }
-
-    // ensure the range stays inside working day grid:
-    // last slot start must be <= endMinutes - slotMinutes
-    const dayStart = new Date(startDate)
-    dayStart.setHours(0, 0, 0, 0)
-    const mins = startDate.getHours() * 60 + startDate.getMinutes()
-    const lastStartMins = mins + (slotsCount - 1) * CFG.slotMinutes
-    if (lastStartMins > (CFG.endMinutes - CFG.slotMinutes)) {
-      return { ok: false, reason: "Pas assez de place sur la journée pour enchaîner ces techniques." }
-    }
-
-    for (let i = 0; i < slotsCount; i++) {
-      const s = addMinutesDate(startDate, i * CFG.slotMinutes)
-      const k = keyFromStartDate(s)
-      if (!isKeySelectableForUser(user, k)) {
-        return { ok: false, reason: "Un des créneaux nécessaires n’est pas disponible." }
-      }
-    }
-
-    return { ok: true }
-  }
-
-  async function refreshCalendarAndBookings(user) {
-    const timeRows = buildTimeRows()
-    const days = makeWeekDays(currentWeekStart)
-
-    const calSub = document.getElementById("calSub")
-    const calTitle = document.getElementById("calTitle")
-    if (calTitle) calTitle.textContent = `Semaine du ${days[0].toLocaleDateString("fr-BE")}`
-    if (calSub) calSub.textContent = computeCalSubLabel()
-
-    // my bookings
-    try {
-      myBookings = await fetchMyBookings(db, user.uid)
-
-      myBookingKeys = new Set(
-        myBookings
-          .filter((a) => String(a.status || "").toLowerCase() !== "cancelled")
-          .map((a) => {
-            const start = a.start?.toDate?.() ? a.start.toDate() : null
-            return start ? keyFromStartDate(start) : null
-          })
-          .filter(Boolean)
-      )
-      renderBookings(myBookings)
-    } catch (e) {
-      console.error(e)
-    }
-
-    // public slots
-    try {
-      publicSlotsMap = await fetchPublicSlotsForWeek(db, currentWeekStart)
-    } catch (e) {
-      console.error(e)
-      if (!isProbablyAdblockNetworkError(e)) showBanner("alert", "Impossible de charger les créneaux.")
-      publicSlotsMap = new Map()
-    }
-
-    // holds
-    try {
-      holdsMap = await fetchHoldsForWeek(db, currentWeekStart)
-    } catch (e) {
-      console.error(e)
-      holdsMap = new Map()
-    }
-
-    // re-evaluate selection (because types can change)
-    if (selectedStartKey) {
-      const wanted = getWantedSlotsCountFromForm()
-      const chk = canSelectRange(user, selectedStartKey, wanted)
-      if (!chk.ok) {
-        selectedStartKey = null
-        selectedRangeKeys = new Set()
-        const b = document.getElementById("btnBook")
-        if (b) b.disabled = true
-      } else {
-        rebuildSelectedRangeKeys()
-        const b = document.getElementById("btnBook")
-        if (b) b.disabled = false
-      }
-    }
-
-    const slotStateByKey = new Map()
-    const min48 = new Date(Date.now() + 48 * 60 * 60 * 1000)
-
-    for (const day of days) {
-      for (const mins of timeRows) {
-        const start = new Date(day)
-        start.setHours(0, 0, 0, 0)
-        start.setMinutes(mins)
-
-        const key = keyFromStartDate(start)
-        const pub = publicSlotsMap.get(key)
-        const hold = holdsMap.get(key)
-
-        let status = "blocked"
-        let disabled = true
-        let title = "Indisponible"
-        let label = ""
-
-        if (myBookingKeys.has(key)) {
-          status = "mine"
-          disabled = true
-          title = "Votre demande"
-          label = "Mon RDV"
-        } else if (start < min48) {
-          status = "blocked"
-          disabled = true
-          title = "Indisponible"
-        } else if (!pub) {
-          status = "blocked"
-          disabled = true
-          title = "Indisponible"
-        } else {
-          const st = String(pub.status || "busy").toLowerCase()
-
-          if (hold && String(hold.uid || "") !== String(user.uid || "")) {
-            status = "blocked"
-            disabled = true
-            title = "Indisponible"
-          } else if (st === "free") {
-            status = "free"
-            disabled = false
-            title = "Disponible"
-            label = "Libre"
-          } else {
-            status = "blocked"
-            disabled = true
-            title = "Indisponible"
-          }
-        }
-
-        slotStateByKey.set(key, { status, disabled, title, label })
-      }
-    }
-
-    renderCalendarGrid(days, timeRows, slotStateByKey, selectedRangeKeys)
-
-    document.querySelectorAll(".slot[data-slotkey]").forEach((cell) => {
-      cell.addEventListener("click", async () => {
-        hideBanner()
-
-        const key = cell.getAttribute("data-slotkey")
-        if (!key) return
-
-        // toggle off if clicking the start key again
-        if (selectedStartKey && selectedStartKey === key) {
-          selectedStartKey = null
-          selectedRangeKeys = new Set()
-          const b = document.getElementById("btnBook")
-          if (b) b.disabled = true
-          await refreshCalendarAndBookings(user)
-          return
-        }
-
-        // cannot click on "mine"
-        if (myBookingKeys.has(key)) return
-
-        const wanted = getWantedSlotsCountFromForm()
-        const chk = canSelectRange(user, key, wanted)
-        if (!chk.ok) {
-          showBanner("warn", chk.reason || "Impossible de sélectionner ce créneau.")
-          return
-        }
-
-        selectedStartKey = key
-        rebuildSelectedRangeKeys()
-
-        const b = document.getElementById("btnBook")
-        if (b) b.disabled = false
-
-        await refreshCalendarAndBookings(user)
-      })
-    })
-  }
-
-  async function bindCalendarNav(user) {
-    document.getElementById("calPrev")?.addEventListener("click", async () => {
-      currentWeekStart = addDays(currentWeekStart, -7)
-      selectedStartKey = null
-      selectedRangeKeys = new Set()
-      const b = document.getElementById("btnBook")
-      if (b) b.disabled = true
-      await refreshCalendarAndBookings(user)
-    })
-
-    document.getElementById("calNext")?.addEventListener("click", async () => {
-      currentWeekStart = addDays(currentWeekStart, 7)
-      selectedStartKey = null
-      selectedRangeKeys = new Set()
-      const b = document.getElementById("btnBook")
-      if (b) b.disabled = true
-      await refreshCalendarAndBookings(user)
-    })
-
-    document.getElementById("calToday")?.addEventListener("click", async () => {
-      currentWeekStart = startOfWeekMonday(new Date())
-      selectedStartKey = null
-      selectedRangeKeys = new Set()
-      const b = document.getElementById("btnBook")
-      if (b) b.disabled = true
-      await refreshCalendarAndBookings(user)
-    })
-  }
-
-  function bindTypesChange(user) {
-    // if user changes techniques after selecting a start slot => revalidate range
-    const container = document.getElementById("f_types")
-    if (!container) return
-
-    container.querySelectorAll("input[type='checkbox']").forEach((cb) => {
-      cb.addEventListener("change", async () => {
-        // just refresh, it will re-evaluate selection and calSub label
-        await refreshCalendarAndBookings(user)
-      })
-    })
-  }
-
-  async function bindBookButton(user) {
-    document.getElementById("btnBook")?.addEventListener("click", async () => {
-      hideBanner()
-      const btnBook = document.getElementById("btnBook")
-
-      if (!selectedStartKey) {
-        showBanner("alert", "Veuillez sélectionner un créneau libre.")
-        return
-      }
-
-      const smart = collectSmartForm()
-      smart.devicesCount = String(smart.devicesCount || "").trim()
-      smart.powerKw = String(smart.powerKw || "").trim()
-      smart.note = String(smart.note || "").trim()
-      smart.addressControl = String(smart.addressControl || "").trim()
-      smart.controlTypeOther = String(smart.controlTypeOther || "").trim()
-      smart.region = String(smart.region || "").trim()
-      smart.chaufferie = String(smart.chaufferie || "").trim()
-      smart.pressure = String(smart.pressure || "").trim()
-      smart.photosLink = String(smart.photosLink || "").trim()
-      smart.photosAvailable = String(smart.photosAvailable || "Non").trim()
-
-      const errs = validateSmartForm(smart)
-      if (errs.length) {
-        showBanner("alert", errs[0])
-        return
-      }
-
-      const wanted = getWantedSlotsCountFromForm()
-      const chk = canSelectRange(user, selectedStartKey, wanted)
-      if (!chk.ok) {
-        showBanner("warn", chk.reason || "Les créneaux nécessaires ne sont plus disponibles.")
-        return
-      }
-
-      const startDate = parseKeyToDate(selectedStartKey)
-      if (!startDate) {
-        showBanner("alert", "Date invalide.")
-        return
-      }
-
-      try {
-        if (btnBook) btnBook.disabled = true
-
-        await bookMultiSlots(db, user, startDate, wanted, smart)
-
-        showBanner("ok", "Demande envoyée ✅ (en attente de validation)")
-        selectedStartKey = null
-        selectedRangeKeys = new Set()
-
-        if (btnBook) btnBook.disabled = true
-        await refreshCalendarAndBookings(user)
-      } catch (e) {
-        console.error(e)
-        if (isProbablyAdblockNetworkError(e)) {
-          showBanner("warn", "Une extension (adblock) bloque des appels réseau.")
-        } else {
-          showBanner("alert", e?.message || "Réservation impossible. Le créneau vient peut-être d’être pris.")
-        }
-      } finally {
-        if (btnBook) btnBook.disabled = !selectedStartKey
-      }
-    })
-  }
-
-  // =====================================================
-  // Profile -> Booking
-  // =====================================================
-  async function ensureProfileThenBooking(user) {
-    const didRedirect = await redirectIfAdmin(db, user)
-    if (didRedirect) return
-
-    let snap
-    try {
-      snap = await db.collection("clients").doc(user.uid).get()
-    } catch (e) {
-      console.error(e)
-      right.innerHTML = `
-        <div class="stepWrap">
-          <span class="step">Erreur</span>
-          <span class="muted" style="font-size:12px">Profil</span>
-        </div>
-        <div class="alert" style="display:block">Impossible de lire Firestore (rules / réseau).</div>
-      `
-      return
-    }
-
-    if (!snap.exists) {
-      renderProfileForm(user.email || "")
-      setStatus(true)
-
-      const btn = document.getElementById("btnSaveProfile")
-      btn?.addEventListener("click", async () => {
-        hideBanner()
-
-        const data = {
-          email: (user.email || "").toLowerCase(),
-          company: (document.getElementById("p_company")?.value || "").trim(),
-          vat: (document.getElementById("p_vat")?.value || "").trim(),
-          phone: normalizePhone(document.getElementById("p_phone")?.value || ""),
-          hqAddress: (document.getElementById("p_hq")?.value || "").trim(),
-          status: "ok",
-          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-        }
-
-        const errs = validateProfile(data)
-        if (errs.length) {
-          showBanner("alert", errs[0])
-          return
-        }
-
-        try {
-          btn.disabled = true
-          await db.collection("clients").doc(user.uid).set(
-            { ...data, createdAt: firebase.firestore.FieldValue.serverTimestamp() },
-            { merge: true }
-          )
-
-          renderBookingShell(user.email || "")
-          selectedStartKey = null
-          selectedRangeKeys = new Set()
-
-          const b = document.getElementById("btnBook")
-          if (b) b.disabled = true
-
-          await bindCalendarNav(user)
-          bindTypesChange(user)
-          await bindBookButton(user)
-          await refreshCalendarAndBookings(user)
-        } catch (e) {
-          console.error(e)
-          if (!isProbablyAdblockNetworkError(e)) showBanner("alert", "Impossible d’enregistrer le profil (rules / réseau).")
-          else showBanner("warn", "Une extension (adblock) bloque certains appels.")
-        } finally {
-          btn.disabled = false
-        }
-      })
-
-      return
-    }
-
-    renderBookingShell(user.email || "")
-    selectedStartKey = null
-    selectedRangeKeys = new Set()
-
-    const b = document.getElementById("btnBook")
-    if (b) b.disabled = true
-
-    await bindCalendarNav(user)
-    bindTypesChange(user)
-    await bindBookButton(user)
-    await refreshCalendarAndBookings(user)
-  }
-
-  // =====================================================
-  // Boot
-  // =====================================================
-  renderAuth()
-  setStatus(false)
-
   const okFirebase = await waitForFirebase(10000)
   if (!okFirebase) {
-    const warningHtml = `
-      <div class="warn" style="display:block">
-        ⚠️ Firebase n’est pas chargé. La connexion ne fonctionnera pas.
-        <div class="tiny" style="margin-top:6px">Vérifie que /__/firebase/init.js se charge bien.</div>
-      </div>
-    `
-    renderAuth(warningHtml)
+    renderAuth(`<div class="warn" style="display:block">Firebase non chargé. Vérifiez /__/firebase/init.js</div>`)
     return
   }
 
@@ -1350,24 +626,719 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   try {
     await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL)
-  } catch {}
+  } catch {
+    // ignore
+  }
 
+  // Collections (Spark-only)
+  const profilesCol = db.collection("profiles")
+  const adminsCol = db.collection("admins")
+  const publicSlotsCol = db.collection("publicSlots") // (read-only)
+  const holdsCol = db.collection("holds")
+  const bookingsCol = db.collection("bookings")
+
+  // =====================================================
+  // Profile logic
+  // =====================================================
+  async function loadMyProfile(uid) {
+    const snap = await profilesCol.doc(uid).get()
+    return snap.exists ? snap.data() : null
+  }
+
+  async function saveMyProfile(uid, data) {
+    const payload = {
+      ...data,
+      phone: normalizePhone(data.phone),
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    }
+
+    await profilesCol.doc(uid).set(payload, { merge: true })
+  }
+
+  // =====================================================
+  // Calendar data fetch (publicSlots + holds + my bookings)
+  // =====================================================
+  function isExpiredHold(holdData) {
+    try {
+      const exp = holdData?.expiresAt?.toDate ? holdData.expiresAt.toDate() : null
+      if (!exp) return false
+      return exp.getTime() <= Date.now()
+    } catch {
+      return false
+    }
+  }
+
+  async function fetchPublicSlotsForWeek(days) {
+    const start = startOfDay(days[0])
+    const end = addDays(start, CFG.daysToShow)
+    const snap = await publicSlotsCol.where("start", ">=", start).where("start", "<", end).get()
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+  }
+
+  async function fetchHoldsForWeek(days) {
+    const start = startOfDay(days[0])
+    const end = addDays(start, CFG.daysToShow)
+
+    const snap = await holdsCol.where("start", ">=", start).where("start", "<", end).get()
+    const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+    return items.filter((x) => !isExpiredHold(x))
+  }
+
+  async function fetchMyBookingsForWeek(uid, days) {
+    const start = startOfDay(days[0])
+    const end = addDays(start, CFG.daysToShow)
+
+    const snap = await bookingsCol
+      .where("uid", "==", uid)
+      .where("start", ">=", start)
+      .where("start", "<", end)
+      .limit(CFG.maxBookingsToShow)
+      .get()
+
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+  }
+
+  // =====================================================
+  // Slot state mapping
+  // =====================================================
+  function slotTitleFromState(st) {
+    if (st.status === "free") return "Libre"
+    if (st.status === "mine") return "Votre demande"
+    if (st.status === "hold") return "En cours de réservation"
+    return "Indisponible"
+  }
+
+  function buildSlotStateByKey(days, timeRows, publicSlots, holds, myBookings) {
+    const map = new Map()
+
+    // init all blocked by default
+    for (const d of days) {
+      for (const mins of timeRows) {
+        const slotStart = new Date(d)
+        slotStart.setHours(0, 0, 0, 0)
+        slotStart.setMinutes(mins)
+        const key = keyFromStartDate(slotStart)
+        map.set(key, { status: "blocked", disabled: true, title: "Indisponible", label: "" })
+      }
+    }
+
+    // publicSlots: mark free
+    for (const s of publicSlots) {
+      const start = s.start?.toDate ? s.start.toDate() : null
+      if (!start) continue
+      const key = keyFromStartDate(start)
+      const st = String(s.status || "").toLowerCase()
+      if (st === "free") {
+        map.set(key, { status: "free", disabled: false, title: "Libre", label: "" })
+      } else {
+        map.set(key, { status: "blocked", disabled: true, title: "Indisponible", label: "" })
+      }
+    }
+
+    // holds: mark hold (disabled)
+    for (const h of holds) {
+      const start = h.start?.toDate ? h.start.toDate() : null
+      if (!start) continue
+      const key = keyFromStartDate(start)
+      map.set(key, { status: "hold", disabled: true, title: "En cours de réservation", label: "" })
+    }
+
+    // my bookings: mark mine
+    for (const b of myBookings) {
+      const start = b.start?.toDate ? b.start.toDate() : null
+      if (!start) continue
+      const key = keyFromStartDate(start)
+      map.set(key, { status: "mine", disabled: true, title: "Votre demande", label: "" })
+    }
+
+    // label set: show dot on free/mine maybe
+    for (const [k, st] of map.entries()) {
+      st.label = st.status === "free" ? "•" : st.status === "mine" ? "•" : ""
+      st.title = slotTitleFromState(st)
+      map.set(k, st)
+    }
+
+    return map
+  }
+
+  // =====================================================
+  // Selection logic: range selection for multi-slots
+  // =====================================================
+  function canSelectRange(slotStateByKey, startKey, slotsCount) {
+    const start = parseKeyToDate(startKey)
+    if (!start) return false
+
+    for (let i = 0; i < slotsCount; i++) {
+      const d = addMinutesDate(start, i * CFG.slotMinutes)
+      const key = keyFromStartDate(d)
+      const st = slotStateByKey.get(key)
+      if (!st || st.status !== "free" || st.disabled) return false
+    }
+    return true
+  }
+
+  function keysForRange(startKey, slotsCount) {
+    const start = parseKeyToDate(startKey)
+    if (!start) return []
+    const keys = []
+    for (let i = 0; i < slotsCount; i++) {
+      const d = addMinutesDate(start, i * CFG.slotMinutes)
+      keys.push(keyFromStartDate(d))
+    }
+    return keys
+  }
+
+  function apply48hRule(slotStateByKey) {
+    // slots < 48h are blocked
+    const minTs = Date.now() + 48 * 60 * 60 * 1000
+    for (const [k, st] of slotStateByKey.entries()) {
+      const d = parseKeyToDate(k)
+      if (!d) continue
+      if (d.getTime() < minTs) {
+        slotStateByKey.set(k, { status: "blocked", disabled: true, title: "Indisponible (moins de 48h)", label: "" })
+      }
+    }
+  }
+
+  // =====================================================
+  // Smart payload builder (form)
+  // =====================================================
+  function readFormPayload() {
+    const addressControl = String(document.getElementById("f_address")?.value || "").trim()
+    const region = String(document.getElementById("f_region")?.value || "").trim()
+    const chaufferie = String(document.getElementById("f_chaufferie")?.value || "").trim()
+
+    const checked = Array.from(document.querySelectorAll("#f_types input[type='checkbox']:checked")).map((x) =>
+      String(x?.value || "").trim()
+    )
+    const controlTypes = checked.filter(Boolean)
+
+    const isOtherChecked = Boolean(document.getElementById("f_type_other_chk")?.checked)
+    const controlTypeOther = String(document.getElementById("f_type_other")?.value || "").trim()
+
+    const pressure = String(document.getElementById("f_pressure")?.value || "").trim()
+    const devicesCount = String(document.getElementById("f_devices")?.value || "").trim()
+    const powerKw = String(document.getElementById("f_power")?.value || "").trim()
+
+    const photosAvailable = String(document.getElementById("f_photos")?.value || "Non").trim()
+    const photosLink = String(document.getElementById("f_photos_link")?.value || "").trim()
+
+    const note = String(document.getElementById("f_note")?.value || "").trim()
+
+    return {
+      addressControl,
+      region,
+      chaufferie,
+
+      controlTypes,
+      isOtherChecked,
+      controlTypeOther,
+
+      pressure,
+      devicesCount,
+      powerKw,
+
+      photosAvailable,
+      photosLink,
+
+      note,
+    }
+  }
+
+  function validateBookingPayload(p) {
+    const errors = []
+    if (!p.addressControl || p.addressControl.length < 8) errors.push("Adresse du contrôle : obligatoire.")
+    if (!p.controlTypes || !p.controlTypes.length) errors.push("Veuillez sélectionner au moins 1 type de contrôle.")
+    if (p.isOtherChecked && (!p.controlTypeOther || p.controlTypeOther.length < 3)) errors.push("Veuillez préciser le type “Autre”.")
+    return errors
+  }
+
+  function buildSmartPayload(p, user, profile) {
+    // payload stored in bookings + requests
+    return {
+      uid: user.uid,
+      email: (user.email || "").toLowerCase(),
+
+      company: String(profile?.company || "").trim(),
+      vat: String(profile?.vat || "").trim(),
+      phone: String(profile?.phone || "").trim(),
+      hqAddress: String(profile?.hqAddress || "").trim(),
+
+      addressControl: p.addressControl,
+      region: p.region,
+      chaufferie: p.chaufferie,
+
+      controlTypes: p.controlTypes,
+      controlTypeOther: p.isOtherChecked ? p.controlTypeOther : "",
+
+      pressure: p.pressure,
+      devicesCount: p.devicesCount,
+      powerKw: p.powerKw,
+
+      photosAvailable: p.photosAvailable,
+      photosLink: p.photosLink,
+
+      note: p.note,
+    }
+  }
+
+  // =====================================================
+  // Booking transaction (Spark-safe) + REQUESTS (Module 5.1)
+  // =====================================================
+  async function bookMultiSlots(db, user, startDate, slotsCount, smartPayload) {
+    // ✅ Module 5.1 — create requests/{requestId} as single source of truth
+    // Spark-only + Spark-safe: in transaction, we only read holds (not bookings)
+    const FieldValue = firebase.firestore.FieldValue
+
+    const slotStarts = []
+    for (let i = 0; i < slotsCount; i++) {
+      slotStarts.push(new Date(startDate.getTime() + i * CFG.slotMinutes * 60000))
+    }
+
+    const requestId =
+      "REQ_" +
+      user.uid.slice(0, 6) +
+      "_" +
+      Date.now() +
+      "_" +
+      Math.random().toString(16).slice(2, 6)
+
+    const durationMinutes = slotsCount * CFG.slotMinutes
+    const endDate = new Date(startDate.getTime() + durationMinutes * 60000)
+
+    const expiresAt = new Date(Date.now() + CFG.holdMinutes * 60000)
+
+    const holdsCol = db.collection("holds")
+    const bookingsCol = db.collection("bookings")
+    const requestsCol = db.collection("requests")
+
+    await db.runTransaction(async (tx) => {
+      // 1) Collision check: holds only (Spark-safe)
+      for (const d of slotStarts) {
+        const slotId = slotIdFromDate(d)
+        const holdRef = holdsCol.doc(slotId)
+        const holdSnap = await tx.get(holdRef)
+
+        if (holdSnap.exists) {
+          throw new Error("Un des créneaux est en cours de réservation. Merci d’actualiser.")
+        }
+      }
+
+      // 2) Create holds + bookings (one per slot)
+      for (let i = 0; i < slotStarts.length; i++) {
+        const d = slotStarts[i]
+        const slotId = slotIdFromDate(d)
+
+        const holdRef = holdsCol.doc(slotId)
+        const bookingRef = bookingsCol.doc(slotId)
+
+        tx.set(holdRef, {
+          uid: user.uid,
+          slotId,
+          start: firebase.firestore.Timestamp.fromDate(d),
+          end: firebase.firestore.Timestamp.fromDate(addMinutesDate(d, CFG.slotMinutes)),
+          status: "hold",
+          requestId,
+          expiresAt: firebase.firestore.Timestamp.fromDate(expiresAt),
+          createdAt: FieldValue.serverTimestamp(),
+        })
+
+        tx.set(bookingRef, {
+          uid: user.uid,
+          email: (user.email || "").toLowerCase(),
+          slotId,
+          start: firebase.firestore.Timestamp.fromDate(d),
+          end: firebase.firestore.Timestamp.fromDate(addMinutesDate(d, CFG.slotMinutes)),
+          status: "pending",
+          requestId,
+          slotIndex: i + 1,
+          totalSlots: slotsCount,
+          ...smartPayload,
+          createdAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        })
+      }
+
+      // 3) Create request (single doc = truth)
+      const requestRef = requestsCol.doc(requestId)
+      tx.set(requestRef, {
+        requestId,
+        uid: user.uid,
+        email: (user.email || "").toLowerCase(),
+
+        slotIds: slotStarts.map((d) => slotIdFromDate(d)),
+        totalSlots: slotsCount,
+        durationMinutes,
+
+        start: firebase.firestore.Timestamp.fromDate(startDate),
+        end: firebase.firestore.Timestamp.fromDate(endDate),
+
+        status: "pending",
+
+        ...smartPayload,
+
+        outlook: {
+          linked: false,
+          eventId: null,
+          lastSeenAt: null,
+        },
+
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+    })
+
+    return requestId
+  }
+
+  // =====================================================
+  // "Mes rendez-vous" grouping
+  // =====================================================
+  function groupBookingsByRequestId(bookings) {
+    const map = new Map()
+    for (const b of bookings || []) {
+      const rid = String(b.requestId || "no_request").trim() || "no_request"
+      if (!map.has(rid)) map.set(rid, [])
+      map.get(rid).push(b)
+    }
+
+    const groups = []
+    for (const [rid, items] of map.entries()) {
+      items.sort((a, b) => {
+        const ta = a.start?.toDate ? a.start.toDate().getTime() : 0
+        const tb = b.start?.toDate ? b.start.toDate().getTime() : 0
+        return ta - tb
+      })
+      groups.push({ requestId: rid, items })
+    }
+
+    groups.sort((a, b) => {
+      const ta = a.items?.[0]?.start?.toDate ? a.items[0].start.toDate().getTime() : 0
+      const tb = b.items?.[0]?.start?.toDate ? b.items[0].start.toDate().getTime() : 0
+      return tb - ta
+    })
+
+    return groups
+  }
+
+  function renderMyBookingsList(bookings) {
+    const list = document.getElementById("apptList")
+    if (!list) return
+
+    if (!bookings || !bookings.length) {
+      list.innerHTML = `<div class="muted">Aucune demande.</div>`
+      return
+    }
+
+    const groups = groupBookingsByRequestId(bookings)
+
+    list.innerHTML = groups
+      .slice(0, 40)
+      .map((g) => {
+        const first = g.items[0]
+        const start = first.start?.toDate ? first.start.toDate() : null
+        const end = first.end?.toDate ? first.end.toDate() : null
+
+        const when = start
+          ? start.toLocaleString("fr-BE", { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })
+          : ""
+
+        const rid = escapeHtml(g.requestId)
+        const n = g.items.length
+        const types = Array.isArray(first.controlTypes) ? first.controlTypes.join(", ") : ""
+        const addr = escapeHtml(first.addressControl || "")
+        const note = escapeHtml(first.note || "")
+        const st = escapeHtml(first.status || "pending")
+
+        return `
+          <div class="apptCard">
+            <div class="apptTop">
+              <div style="font-weight:1000">${escapeHtml(when)} <span class="badge">${escapeHtml(st)}</span></div>
+              <div class="tiny">Demande: <b>${rid}</b> • Slots: <b>${n}</b></div>
+            </div>
+            <div class="tiny muted" style="margin-top:6px">${escapeHtml(types)}</div>
+            <div class="tiny" style="margin-top:6px">${addr}</div>
+            ${note ? `<div class="tiny muted" style="margin-top:6px">${note}</div>` : ""}
+          </div>
+        `
+      })
+      .join("")
+  }
+
+  // =====================================================
+  // Main booking screen controller
+  // =====================================================
+  let weekStart = startOfWeekMonday(new Date())
+  let selectedStartKey = null
+  let selectedKeysSet = new Set()
+  let lastSlotStateByKey = new Map()
+  let lastMyBookingsThisWeek = []
+
+  async function refreshCalendar(user) {
+    const days = makeWeekDays(weekStart)
+    const timeRows = buildTimeRows()
+
+    const [publicSlots, holds, myBookings] = await Promise.all([
+      fetchPublicSlotsForWeek(days),
+      fetchHoldsForWeek(days),
+      fetchMyBookingsForWeek(user.uid, days),
+    ])
+
+    lastMyBookingsThisWeek = myBookings
+
+    const slotStateByKey = buildSlotStateByKey(days, timeRows, publicSlots, holds, myBookings)
+    apply48hRule(slotStateByKey)
+
+    lastSlotStateByKey = slotStateByKey
+
+    // Adjust selection if now invalid
+    const slotsCount = computeWantedSlotsCountFromForm()
+    const canStill = selectedStartKey ? canSelectRange(slotStateByKey, selectedStartKey, slotsCount) : false
+    if (!canStill) {
+      selectedStartKey = null
+      selectedKeysSet = new Set()
+    } else {
+      selectedKeysSet = new Set(keysForRange(selectedStartKey, slotsCount))
+    }
+
+    renderCalendarGrid(days, timeRows, slotStateByKey, selectedKeysSet)
+
+    // title
+    const title = document.getElementById("calTitle")
+    if (title) {
+      const end = addDays(days[0], CFG.daysToShow - 1)
+      title.textContent = `${CFG.weeksToShowLabel} ${dayLabel(days[0])} → ${dayLabel(end)}`
+    }
+
+    // sub
+    const sub = document.getElementById("calSub")
+    if (sub) sub.textContent = computeCalSubLabel()
+
+    // wire clicks
+    document.querySelectorAll(".slot").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const key = btn.getAttribute("data-key")
+        if (!key) return
+
+        const slotsCount2 = computeWantedSlotsCountFromForm()
+        if (!canSelectRange(lastSlotStateByKey, key, slotsCount2)) {
+          showBanner("warn", "Ce créneau (ou un des créneaux suivants) n’est plus disponible.")
+          return
+        }
+
+        selectedStartKey = key
+        selectedKeysSet = new Set(keysForRange(key, slotsCount2))
+        hideBanner()
+        refreshCalendar(user).catch(console.error)
+        updateBookButtonState()
+      })
+    })
+
+    renderMyBookingsList(myBookings)
+    updateBookButtonState()
+  }
+
+  function updateBookButtonState() {
+    const btn = document.getElementById("btnBook")
+    if (!btn) return
+    const slotsCount = computeWantedSlotsCountFromForm()
+    const ok = selectedStartKey && canSelectRange(lastSlotStateByKey, selectedStartKey, slotsCount)
+    btn.disabled = !ok
+  }
+
+  function wireFormReactivity(user) {
+    // on any form change, recompute slots count label, refresh selection validity
+    const ids = [
+      "f_address",
+      "f_region",
+      "f_chaufferie",
+      "f_pressure",
+      "f_devices",
+      "f_power",
+      "f_photos",
+      "f_photos_link",
+      "f_note",
+      "f_type_other",
+      "f_type_other_chk",
+    ]
+
+    ids.forEach((id) => {
+      const el = document.getElementById(id)
+      if (el) {
+        el.addEventListener("input", () => {
+          const sub = document.getElementById("calSub")
+          if (sub) sub.textContent = computeCalSubLabel()
+          updateBookButtonState()
+        })
+        el.addEventListener("change", () => {
+          const sub = document.getElementById("calSub")
+          if (sub) sub.textContent = computeCalSubLabel()
+          updateBookButtonState()
+        })
+      }
+    })
+
+    document.querySelectorAll("#f_types input[type='checkbox']").forEach((el) => {
+      el.addEventListener("change", () => {
+        const sub = document.getElementById("calSub")
+        if (sub) sub.textContent = computeCalSubLabel()
+        // If selection becomes invalid, refresh will clear it
+        refreshCalendar(user).catch(console.error)
+      })
+    })
+  }
+
+  async function ensureProfileThenBooking(user) {
+    const profile = await loadMyProfile(user.uid)
+
+    if (!profile || !profile.company || !profile.vat || !profile.phone || !profile.hqAddress) {
+      renderProfileForm(user.email || "")
+      showBanner("warn", "Veuillez compléter votre profil avant de demander un rendez-vous.")
+
+      const btnSave = document.getElementById("btnSaveProfile")
+      btnSave?.addEventListener("click", async () => {
+        hideBanner()
+
+        const data = {
+          company: String(document.getElementById("p_company")?.value || "").trim(),
+          vat: String(document.getElementById("p_vat")?.value || "").trim(),
+          phone: String(document.getElementById("p_phone")?.value || "").trim(),
+          hqAddress: String(document.getElementById("p_hq")?.value || "").trim(),
+        }
+
+        const errors = validateProfile(data)
+        if (errors.length) {
+          showBanner("alert", errors.join(" "))
+          return
+        }
+
+        try {
+          btnSave.disabled = true
+          await saveMyProfile(user.uid, data)
+          showBanner("ok", "Profil enregistré ✅")
+          await ensureProfileThenBooking(user)
+        } catch (err) {
+          console.error(err)
+          if (isProbablyAdblockNetworkError(err)) {
+            showBanner("alert", "Erreur réseau (bloqué par une extension ?). Désactivez AdBlock et réessayez.")
+          } else {
+            showBanner("alert", "Impossible d’enregistrer le profil. Réessayez.")
+          }
+        } finally {
+          btnSave.disabled = false
+        }
+      })
+
+      return
+    }
+
+    renderBookingShell(user.email || "")
+    const clientVersionEl = document.getElementById("clientVersion")
+    if (clientVersionEl) clientVersionEl.textContent = INDEX_VERSION
+
+    // calendar nav
+    document.getElementById("calPrev")?.addEventListener("click", async () => {
+      weekStart = addDays(weekStart, -CFG.daysToShow)
+      await refreshCalendar(user)
+    })
+    document.getElementById("calNext")?.addEventListener("click", async () => {
+      weekStart = addDays(weekStart, CFG.daysToShow)
+      await refreshCalendar(user)
+    })
+    document.getElementById("calToday")?.addEventListener("click", async () => {
+      weekStart = startOfWeekMonday(new Date())
+      await refreshCalendar(user)
+    })
+
+    wireFormReactivity(user)
+
+    // book
+    const btnBook = document.getElementById("btnBook")
+    btnBook?.addEventListener("click", async () => {
+      hideBanner()
+
+      const slotsCount = computeWantedSlotsCountFromForm()
+      if (!selectedStartKey) {
+        showBanner("alert", "Veuillez sélectionner un créneau.")
+        return
+      }
+      if (!canSelectRange(lastSlotStateByKey, selectedStartKey, slotsCount)) {
+        showBanner("warn", "Ce créneau (ou un des créneaux suivants) n’est plus disponible.")
+        return
+      }
+
+      const form = readFormPayload()
+      const errors = validateBookingPayload(form)
+      if (errors.length) {
+        showBanner("alert", errors.join(" "))
+        return
+      }
+
+      const smartPayload = buildSmartPayload(form, user, profile)
+      const startDate = parseKeyToDate(selectedStartKey)
+      if (!startDate) {
+        showBanner("alert", "Date sélectionnée invalide.")
+        return
+      }
+
+      try {
+        btnBook.disabled = true
+        const reqId = await bookMultiSlots(db, user, startDate, slotsCount, smartPayload)
+        showBanner("ok", `Demande envoyée ✅ (ID: ${reqId})`)
+        selectedStartKey = null
+        selectedKeysSet = new Set()
+        await refreshCalendar(user)
+      } catch (err) {
+        console.error(err)
+        if (isProbablyAdblockNetworkError(err)) {
+          showBanner("alert", "Erreur réseau (bloqué par une extension ?). Désactivez AdBlock et réessayez.")
+        } else if (String(err?.message || "").includes("en cours de réservation")) {
+          showBanner("warn", err.message)
+        } else {
+          showBanner("alert", "Réservation impossible. Veuillez réessayer.")
+        }
+      } finally {
+        btnBook.disabled = false
+      }
+    })
+
+    await refreshCalendar(user)
+  }
+
+  // =====================================================
+  // Top actions
+  // =====================================================
   btnLogout.addEventListener("click", async () => {
-    await auth.signOut()
+    try {
+      await auth.signOut()
+    } catch (e) {
+      console.warn("logout err", e)
+    }
   })
 
+  // =====================================================
+  // Auth state
+  // =====================================================
+  renderAuth()
+  setStatus(false)
   wireAuthHandlers(auth)
 
   auth.onAuthStateChanged(async (user) => {
-    setStatus(!!user)
-
     if (!user) {
+      setStatus(false)
       __adminChecked = false
       __isAdminCached = false
       renderAuth()
       wireAuthHandlers(auth)
       return
     }
+
+    setStatus(true)
+
+    // admin redirect
+    const redirected = await redirectIfAdmin(db, user)
+    if (redirected) return
 
     hideBanner()
     await ensureProfileThenBooking(user)

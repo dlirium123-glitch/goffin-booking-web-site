@@ -1,9 +1,9 @@
 /* ===============================
    Admin — Goffin Booking (v3)
-   Version: 2026-02-16-3
+   Version: 2026-02-21-1 (Spark-only, IDs fixed)
    =============================== */
 /* eslint-disable no-console */
-const ADMIN_VERSION = "admin-2026-02-16-3"
+const ADMIN_VERSION = "admin-2026-02-21-1"
 console.log("admin.v3.js chargé ✅", ADMIN_VERSION)
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -75,17 +75,20 @@ document.addEventListener("DOMContentLoaded", async () => {
   // Planning semaine
   const planningGrid = document.getElementById("planningGrid")
 
-  // Force Outlook Sync button
-  const btnForceOutlookSync = document.getElementById("btnForceOutlookSync")
-  const btnOpenActions = document.getElementById("btnOpenActions")
-  const syncRunMsg = document.getElementById("syncRunMsg")
-  const syncRunOk = document.getElementById("syncRunOk")
+  // Liens GitHub (présents dans admin.html)
+  const btnOpenOutlookWorkflow = document.getElementById("btnOpenOutlookWorkflow")
+  const btnOpenActionsAll = document.getElementById("btnOpenActionsAll")
 
   const mustHave = [pill, statusText, btnLogin, btnLogout, overlay, loginErr, apptList, apptEmpty, apptMsg, apptOk]
   if (mustHave.some((x) => !x)) {
     console.error("admin.html: IDs essentiels manquants (pill/status/login/appointments).")
     return
   }
+
+  // ✅ Spark-only : on ne fait PAS de déclenchement workflow via API
+  // (on garde juste les liens dans admin.html)
+  if (btnOpenOutlookWorkflow) btnOpenOutlookWorkflow.rel = "noopener noreferrer"
+  if (btnOpenActionsAll) btnOpenActionsAll.rel = "noopener noreferrer"
 
   let isAdmin = false
   let _unsubSyncHealth = null
@@ -173,36 +176,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     slotsOk.style.display = "none"
     slotsOk.hidden = true
     slotsOk.textContent = ""
-  }
-
-  function showSyncRunErr(t) {
-    if (!syncRunMsg || !syncRunOk) return
-    syncRunMsg.style.display = "block"
-    syncRunMsg.hidden = false
-    syncRunMsg.textContent = t
-    syncRunOk.style.display = "none"
-    syncRunOk.hidden = true
-    syncRunOk.textContent = ""
-  }
-
-  function showSyncRunOk(t) {
-    if (!syncRunMsg || !syncRunOk) return
-    syncRunOk.style.display = "block"
-    syncRunOk.hidden = false
-    syncRunOk.textContent = t
-    syncRunMsg.style.display = "none"
-    syncRunMsg.hidden = true
-    syncRunMsg.textContent = ""
-  }
-
-  function clearSyncRunMsg() {
-    if (!syncRunMsg || !syncRunOk) return
-    syncRunMsg.style.display = "none"
-    syncRunMsg.hidden = true
-    syncRunMsg.textContent = ""
-    syncRunOk.style.display = "none"
-    syncRunOk.hidden = true
-    syncRunOk.textContent = ""
   }
 
   function escapeHtml(s) {
@@ -554,7 +527,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       apptList.innerHTML = items.map((a) => {
         const st = statusBadge(a.status)
         const when = fmtDate(a.start)
-        const uid = escapeHtml(a.uid || "")
+        const uidTxt = escapeHtml(a.uid || "")
         const note = escapeHtml(a.note || "")
 
         const isCancelled = String(a.status || "").toLowerCase() === "cancelled"
@@ -568,7 +541,7 @@ document.addEventListener("DOMContentLoaded", async () => {
               <div>
                 <div style="font-weight:900">${when}</div>
                 <div class="muted">${note ? note : "<span class='tiny'>(pas de note)</span>"}</div>
-                <div class="tiny">uid: ${uid}</div>
+                <div class="tiny">uid: ${uidTxt}</div>
 
                 ${
                   isCancelled
@@ -678,7 +651,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         const when = fmtDate(m.appointmentStart)
         const adr = escapeHtml(m.appointmentAddress || "")
         const msg = escapeHtml(m.message || "")
-        const uid = escapeHtml(m.uid || "")
+        const uidTxt = escapeHtml(m.uid || "")
         const apptId = escapeHtml(m.appointmentId || "")
         const status = escapeHtml(m.status || "new")
 
@@ -688,7 +661,7 @@ document.addEventListener("DOMContentLoaded", async () => {
               <div>
                 <div style="font-weight:900">RDV: ${when}</div>
                 <div class="muted">${adr}</div>
-                <div class="tiny">uid: ${uid}</div>
+                <div class="tiny">uid: ${uidTxt}</div>
                 <div class="tiny">appointmentId: ${apptId}</div>
               </div>
               <span class="badge pending">${status}</span>
@@ -948,7 +921,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     cols.forEach((day, i) => {
       const dd = pad2(day.getDate())
       const mm = pad2(day.getMonth() + 1)
-      html += `<div class="slot" style="justify-content:center;background:#f8fafc">${days[i]} ${dd}/${mm}</div>`
+      html += `<div class="slot slotHead" style="justify-content:center">${days[i]} ${dd}/${mm}</div>`
     })
 
     timeSlots.forEach((mins) => {
@@ -961,7 +934,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         const d = map.get(id)
         if (!d) {
-          html += `<div class="slot free" style="opacity:.55">—</div>`
+          html += `<div class="slot slotEmpty free" style="opacity:.55">—</div>`
           return
         }
 
@@ -984,73 +957,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     planningGrid.innerHTML = html
   }
-
-  // ==========================================================
-  // ✅ Force Outlook Sync (via Cloud Function) — zéro token client
-  // ==========================================================
-  const GITHUB_REPO_OWNER = "TON_OWNER"
-  const GITHUB_REPO_NAME = "TON_REPO"
-  const GITHUB_WORKFLOW_FILE = "outlook-sync.yml"
-  const GITHUB_BRANCH = "main"
-
-  if (btnOpenActions) {
-    btnOpenActions.href = `https://github.com/${GITHUB_REPO_OWNER}/${GITHUB_REPO_NAME}/actions/workflows/${GITHUB_WORKFLOW_FILE}`
-  }
-
-  async function triggerOutlookSync() {
-    clearSyncRunMsg()
-
-    if (!isAdmin) {
-      showSyncRunErr("Connecte-toi en admin d’abord.")
-      return
-    }
-
-    if (!btnForceOutlookSync) return
-    const old = btnForceOutlookSync.textContent
-    btnForceOutlookSync.disabled = true
-    btnForceOutlookSync.textContent = "Lancement…"
-
-    try {
-      const user = auth.currentUser
-      if (!user) {
-        showSyncRunErr("Session expirée. Reconnecte-toi.")
-        return
-      }
-
-      const idToken = await user.getIdToken()
-
-      const res = await fetch("/api/trigger-outlook-sync", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({
-          ref: GITHUB_BRANCH,
-          reason: "manual-admin",
-        }),
-      })
-
-      const data = await res.json().catch(() => ({}))
-
-      if (!res.ok) {
-        const msg = data?.error || `Erreur HTTP ${res.status}`
-        showSyncRunErr(`Impossible de lancer la sync: ${msg}`)
-        return
-      }
-
-      showSyncRunOk("✅ Sync déclenchée sur GitHub Actions (workflow_dispatch).")
-      await refreshSyncHealthOnce()
-    } catch (e) {
-      console.error(e)
-      showSyncRunErr("Erreur réseau lors du déclenchement.")
-    } finally {
-      btnForceOutlookSync.disabled = false
-      btnForceOutlookSync.textContent = old || "Lancer la sync maintenant"
-    }
-  }
-
-  if (btnForceOutlookSync) btnForceOutlookSync.addEventListener("click", triggerOutlookSync)
 
   // ========= UI EVENTS =========
   document.getElementById("btnRefresh")?.addEventListener("click", async () => {
@@ -1133,7 +1039,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     hideErr(modifMsg)
     hideOk(modifOk)
     clearSlotsMsg()
-    clearSyncRunMsg()
 
     isAdmin = false
     unbindSyncHealthRealtime()

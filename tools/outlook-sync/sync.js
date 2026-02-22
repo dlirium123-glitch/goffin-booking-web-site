@@ -13,6 +13,7 @@ function pad2(n) {
   return String(n).padStart(2, "0")
 }
 
+// slotId = YYYYMMDD_HHMM
 function slotIdFromDate(d) {
   const yyyy = d.getFullYear()
   const mm = pad2(d.getMonth() + 1)
@@ -20,6 +21,19 @@ function slotIdFromDate(d) {
   const hh = pad2(d.getHours())
   const mi = pad2(d.getMinutes())
   return `${yyyy}${mm}${dd}_${hh}${mi}`
+}
+
+function dateFromSlotId(slotId) {
+  const m = /^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})$/.exec(String(slotId || ""))
+  if (!m) return null
+  const yy = Number(m[1])
+  const mo = Number(m[2])
+  const dd = Number(m[3])
+  const hh = Number(m[4])
+  const mi = Number(m[5])
+  const d = new Date(yy, mo - 1, dd, hh, mi, 0, 0)
+  if (Number.isNaN(d.getTime())) return null
+  return d
 }
 
 function addMinutes(d, minutes) {
@@ -70,6 +84,20 @@ function isProtectedBlocked(doc) {
   const reason = String(doc?.blockedReason || "").toLowerCase()
   if (status !== "blocked") return false
   return reason === "validated"
+}
+
+function isOutlookBlocked(doc) {
+  const status = String(doc?.status || "").toLowerCase()
+  const reason = String(doc?.blockedReason || "").toLowerCase()
+  return status === "blocked" && reason === "outlook"
+}
+
+function publicStatusFromFreeSlot(doc) {
+  const status = String(doc?.status || "free").toLowerCase()
+  if (status === "blocked") return "busy"
+  if (status === "pending") return "busy"
+  if (status === "validated") return "busy"
+  return "free"
 }
 
 async function setSyncHealth({ col, status, reason, message, meta }) {
@@ -161,6 +189,7 @@ async function main() {
 
   console.log("Outlook sync", { projectId, from: fromDate.toISOString(), to: toDate.toISOString() })
 
+  // 1) Fetch ICS
   let icsText = ""
   try {
     const res = await fetch(icsUrl)
@@ -171,6 +200,7 @@ async function main() {
     throw e
   }
 
+  // 2) Parse ICS
   let parsed
   try {
     parsed = ical.sync.parseICS(icsText)
@@ -179,7 +209,7 @@ async function main() {
     throw e
   }
 
-  // Build busy slot ids from events (RRULE supported)
+  // 3) Compute busyIds (RRULE supported)
   const busyIds = new Set()
   let eventsSeen = 0
   let occurrencesSeen = 0
@@ -218,83 +248,148 @@ async function main() {
 
   console.log("Events seen:", eventsSeen, "Occurrences:", occurrencesSeen, "Busy slots:", busyIds.size)
 
-  // Load existing freeSlots range to avoid overwriting validated + cleanup old outlook blocks
+  // 4) Load existing freeSlots range
   const existing = new Map()
   try {
     const fromTs = Timestamp.fromDate(fromDate)
     const toTs = Timestamp.fromDate(toDate)
     const snap = await freeSlotsCol.where("start", ">=", fromTs).where("start", "<", toTs).get()
-    snap.forEach((d) => existing.set(d.id, d.data() || {}))
+    snap.forEach((d) => existing.set(d.id, { id: d.id, ...(d.data() || {}) }))
   } catch (e) {
-    await setSyncHealth({ col: syncHealthCol, status: "failed", reason: "firestore_read_failed", message: String(e.message || e) })
+    await setSyncHealth({
+      col: syncHealthCol,
+      status: "failed",
+      reason: "firestore_read_failed",
+      message: String(e.message || e),
+    })
     throw e
   }
 
+  // 5) Build EFFECTIVE state map (this is the key fix)
+  const effective = new Map(existing) // clone
   const nowServer = FieldValue.serverTimestamp()
   const writes = []
 
-  // 1) Apply Outlook busy blocks
+  // Ensure any busy slot exists in effective (with start/end)
   for (const id of busyIds) {
-    const ex = existing.get(id)
-
-    if (ex && isProtectedBlocked(ex)) {
-      writes.push({
-        ref: publicSlotsCol.doc(id),
-        data: { status: "busy", updatedAt: nowServer },
-        merge: true,
+    if (!effective.has(id)) {
+      const d = dateFromSlotId(id)
+      if (!d) continue
+      effective.set(id, {
+        id,
+        start: Timestamp.fromDate(d),
+        end: Timestamp.fromDate(addMinutes(d, slotMinutes)),
+        status: "free",
+        blockedReason: null,
       })
+    }
+  }
+
+  // A) Apply Outlook busy blocks in effective + schedule writes
+  for (const id of busyIds) {
+    const ex = effective.get(id)
+
+    // If validated => do NOT override freeSlots, but public must be busy
+    if (ex && isProtectedBlocked(ex)) {
+      // only public busy (mirror will also set busy, but we keep it safe)
       continue
     }
 
-    writes.push({
-      ref: freeSlotsCol.doc(id),
-      data: {
-        status: "blocked",
-        blockedReason: "outlook",
-        updatedAt: nowServer,
-        createdAt: ex ? ex.createdAt || nowServer : nowServer,
-      },
-      merge: true,
-    })
+    const d = ex?.start?.toDate ? ex.start.toDate() : dateFromSlotId(id)
+    const startTs = ex?.start || (d ? Timestamp.fromDate(d) : null)
+    const endTs = ex?.end || (d ? Timestamp.fromDate(addMinutes(d, slotMinutes)) : null)
 
-    writes.push({
-      ref: publicSlotsCol.doc(id),
-      data: {
-        status: "busy",
-        updatedAt: nowServer,
-      },
-      merge: true,
+    effective.set(id, {
+      ...(ex || { id }),
+      start: startTs,
+      end: endTs,
+      status: "blocked",
+      blockedReason: "outlook",
+      updatedAt: nowServer,
+      createdAt: ex?.createdAt || nowServer,
     })
   }
 
-  // 2) Cleanup: unblock old outlook blocks
-  for (const [id, doc] of existing.entries()) {
-    const status = String(doc?.status || "").toLowerCase()
-    const reason = String(doc?.blockedReason || "").toLowerCase()
-    if (status !== "blocked" || reason !== "outlook") continue
+  // B) Cleanup: unblock old outlook blocks no longer busy
+  for (const [id, doc] of effective.entries()) {
+    if (!isOutlookBlocked(doc)) continue
     if (busyIds.has(id)) continue
 
-    writes.push({
-      ref: freeSlotsCol.doc(id),
-      data: {
-        status: "free",
-        blockedReason: null,
-        updatedAt: nowServer,
-      },
-      merge: true,
+    // Back to free (do not touch validated ever — but outlookBlocked implies not validated)
+    effective.set(id, {
+      ...doc,
+      status: "free",
+      blockedReason: null,
+      updatedAt: nowServer,
     })
+  }
+
+  // 6) Generate writes from effective map
+  //    - write freeSlots changes for outlook blocks/cleanup
+  //    - mirror publicSlots for ALL docs in range (effective)
+  for (const [id, doc] of effective.entries()) {
+    // Only sync within [fromDate, toDate)
+    const start = doc.start?.toDate ? doc.start.toDate() : null
+    if (!start) continue
+    if (start < fromDate || start >= toDate) continue
+
+    const ex = existing.get(id)
+    const protectedValidated = ex && isProtectedBlocked(ex)
+
+    // Write freeSlots if not validated-protected and if we changed outlook-related state
+    if (!protectedValidated) {
+      // We only write if:
+      // - busyIds has it (outlook block expected)
+      // - OR it was outlook-blocked in existing and now freed
+      const needOutlookBlock = busyIds.has(id)
+      const wasOutlookBlocked = ex && isOutlookBlocked(ex)
+      const isNowOutlookBlocked = isOutlookBlocked(doc)
+
+      const shouldWriteFree =
+        (needOutlookBlock && !protectedValidated) ||
+        (wasOutlookBlocked && !needOutlookBlock) ||
+        (isNowOutlookBlocked !== wasOutlookBlocked)
+
+      if (shouldWriteFree) {
+        // Ensure start/end always stored
+        const startTs = doc.start || Timestamp.fromDate(start)
+        const endTs = doc.end || Timestamp.fromDate(addMinutes(start, slotMinutes))
+
+        writes.push({
+          ref: freeSlotsCol.doc(id),
+          data: {
+            start: startTs,
+            end: endTs,
+            status: doc.status || "free",
+            blockedReason: doc.blockedReason || null,
+            updatedAt: nowServer,
+            createdAt: ex ? ex.createdAt || nowServer : nowServer,
+          },
+          merge: true,
+        })
+      }
+    }
+
+    // Mirror publicSlots ALWAYS (full-range mirror)
+    const startTs2 = doc.start || Timestamp.fromDate(start)
+    const endTs2 = doc.end || Timestamp.fromDate(addMinutes(start, slotMinutes))
+
+    // validated/outlook/blocked => busy; free => free
+    const pubStatus = publicStatusFromFreeSlot(doc)
 
     writes.push({
       ref: publicSlotsCol.doc(id),
       data: {
-        status: "free",
+        start: startTs2,
+        end: endTs2,
+        status: pubStatus,
         updatedAt: nowServer,
       },
       merge: true,
     })
   }
 
-  // Commit batches
+  // 7) Commit batches
   const MAX = 450
   for (let i = 0; i < writes.length; i += MAX) {
     const batch = db.batch()
@@ -307,10 +402,22 @@ async function main() {
   await setSyncHealth({
     col: syncHealthCol,
     status: "ok",
-    meta: { eventsSeen, occurrencesSeen, busySlots: busyIds.size, writes: writes.length },
+    meta: {
+      eventsSeen,
+      occurrencesSeen,
+      busySlots: busyIds.size,
+      freeSlotsInRange: existing.size,
+      effectiveSlotsInRange: effective.size,
+      writes: writes.length,
+    },
   })
 
-  console.log("Outlook sync done ✅", { writes: writes.length, busy: busyIds.size })
+  console.log("Outlook sync done ✅", {
+    writes: writes.length,
+    busy: busyIds.size,
+    freeSlotsInRange: existing.size,
+    effectiveSlotsInRange: effective.size,
+  })
 }
 
 main().catch(async (e) => {

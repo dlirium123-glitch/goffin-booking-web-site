@@ -3,10 +3,10 @@ name: Outlook → Firestore (freeSlots sync)
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/30 * * * *" # toutes les 30 minutes
+    - cron: "*/30 * * * *" # every 30 minutes (UTC)
 
 concurrency:
-  group: outlook-sync
+  group: outlook-sync-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -16,6 +16,9 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
+    env:
+      TZ: Europe/Brussels
 
     steps:
       - name: Checkout
@@ -40,20 +43,25 @@ jobs:
       - name: Validate secrets (no output)
         env:
           OUTLOOK_ICS_URL: ${{ secrets.OUTLOOK_ICS_URL }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
         run: |
           if [ -z "$OUTLOOK_ICS_URL" ]; then
             echo "❌ Missing secret: OUTLOOK_ICS_URL"
             exit 1
           fi
+          if [ -z "$FIREBASE_PROJECT_ID" ]; then
+            echo "❌ Missing secret: FIREBASE_PROJECT_ID"
+            exit 1
+          fi
           echo "✅ OUTLOOK_ICS_URL present"
+          echo "✅ FIREBASE_PROJECT_ID present"
 
       - name: Run sync
         working-directory: tools/outlook-sync
         env:
-          FIREBASE_PROJECT_ID: "goffin-booking-web"
-          OUTLOOK_ICS_URL: "${{ secrets.OUTLOOK_ICS_URL }}"
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          OUTLOOK_ICS_URL: ${{ secrets.OUTLOOK_ICS_URL }}
           DAYS_FORWARD: "90"
-          TZ: "Europe/Brussels"
           DEBUG_OUTLOOK_META: "1"
         run: node sync.js
 
@@ -61,8 +69,8 @@ jobs:
         if: always()
         run: |
           echo "### 🔄 Outlook → Firestore sync" >> $GITHUB_STEP_SUMMARY
-          echo "- Project: goffin-booking-web" >> $GITHUB_STEP_SUMMARY
-          echo "- Frequency: every 30 minutes" >> $GITHUB_STEP_SUMMARY
+          echo "- Project: ${{ secrets.FIREBASE_PROJECT_ID }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Frequency: every 30 minutes (UTC scheduler)" >> $GITHUB_STEP_SUMMARY
           echo "- DAYS_FORWARD: 90" >> $GITHUB_STEP_SUMMARY
           echo "- TZ: Europe/Brussels" >> $GITHUB_STEP_SUMMARY
           echo "- DEBUG_OUTLOOK_META: 1" >> $GITHUB_STEP_SUMMARY
