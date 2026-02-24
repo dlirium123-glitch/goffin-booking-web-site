@@ -365,6 +365,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       return __isAdminCached
     } catch (e) {
       console.error("isAdminUser error:", e)
+      // Ne pas figer "false" en cache si on n’a pas pu vérifier (rules/réseau)
+      __adminChecked = false
       __isAdminCached = false
       return false
     }
@@ -1336,8 +1338,14 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     setStatus(true)
 
-    // admin redirect
-    const redirected = await redirectIfAdmin(db, user)
+    // admin redirect (ne doit jamais bloquer un client)
+    let redirected = false
+    try {
+      redirected = await redirectIfAdmin(db, user)
+    } catch (e) {
+      console.warn("redirectIfAdmin failed (treat as client):", e)
+      redirected = false
+    }
     if (redirected) return
 
     hideBanner()
