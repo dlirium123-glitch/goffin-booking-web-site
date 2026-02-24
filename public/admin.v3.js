@@ -1,9 +1,10 @@
 /* ===============================
    Admin — Goffin Booking (v3)
    Version: 2026-02-21-1 (Spark-only, IDs fixed)
+   + Module 5.2 : Requests (source de vérité)
    =============================== */
 /* eslint-disable no-console */
-const ADMIN_VERSION = "admin-2026-02-21-1"
+const ADMIN_VERSION = "admin-2026-02-21-1+requests-5.2"
 console.log("admin.v3.js chargé ✅", ADMIN_VERSION)
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -38,6 +39,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   // Collections
   const appointmentsCol = db.collection("appointments")
   const modifsCol = db.collection("modificationRequests")
+  const requestsCol = db.collection("requests") // ✅ Module 5.2
+  const holdsCol = db.collection("holds") // ✅ libération refus/annul
+  const bookingsCol = db.collection("bookings") // ✅ statut admin si besoin
   const adminsCol = db.collection("admins")
   const slotsCol = db.collection("slots")
   const freeSlotsCol = db.collection("freeSlots")
@@ -65,6 +69,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   const modifEmpty = document.getElementById("modifEmpty")
   const modifMsg = document.getElementById("modifMsg")
   const modifOk = document.getElementById("modifOk")
+
+  // Requests (Module 5.2) — IDs optionnels (si absents : no-op)
+  const reqList = document.getElementById("reqList")
+  const reqEmpty = document.getElementById("reqEmpty")
+  const reqMsg = document.getElementById("reqMsg")
+  const reqOk = document.getElementById("reqOk")
+  const reqFilter = document.getElementById("reqFilter")
+  const btnRefreshRequests = document.getElementById("btnRefreshRequests")
 
   // FreeSlots gen
   const btnGenFreeSlots = document.getElementById("btnGenFreeSlots")
@@ -244,6 +256,23 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
+  // slotId ("YYYYMMDD_HHMM") -> Date locale
+  function dateFromSlotId(slotId) {
+    try {
+      const s = String(slotId || "")
+      const m = /^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})$/.exec(s)
+      if (!m) return null
+      const yyyy = Number(m[1])
+      const mm = Number(m[2])
+      const dd = Number(m[3])
+      const hh = Number(m[4])
+      const mi = Number(m[5])
+      return new Date(yyyy, mm - 1, dd, hh, mi, 0, 0)
+    } catch {
+      return null
+    }
+  }
+
   // ==========================================================
   // SYNC HEALTH (Outlook) — banner vert/orange/rouge
   // ==========================================================
@@ -369,7 +398,19 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   // ==========================================================
-  // Verrouillage VALIDATED dans freeSlots (prioritaire)
+  // Helpers Batch Safe
+  // ==========================================================
+  async function commitInChunks(actions, chunkSize = 400) {
+    for (let i = 0; i < actions.length; i += chunkSize) {
+      const batch = db.batch()
+      const chunk = actions.slice(i, i + chunkSize)
+      chunk.forEach((fn) => fn(batch))
+      await batch.commit()
+    }
+  }
+
+  // ==========================================================
+  // Verrouillage VALIDATED dans freeSlots (legacy appointments)
   // ==========================================================
   async function markFreeSlotAsValidated(appt) {
     const start = appt.start?.toDate ? appt.start.toDate() : null
@@ -610,6 +651,340 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
+  // ==========================================================
+  // Module 5.2 — REQUESTS (source de vérité)
+  // ==========================================================
+  function reqUiEnabled() {
+    return !!(reqList && reqMsg && reqOk)
+  }
+
+  function requestSummary(r) {
+    const company = escapeHtml(r.company || r.profileCompany || "")
+    const vat = escapeHtml(r.vat || r.profileVat || "")
+    const phone = escapeHtml(r.phone || r.profilePhone || "")
+    const email = escapeHtml(r.email || "")
+    const addr = escapeHtml(r.address || r.controlAddress || r.siteAddress || "")
+    const region = escapeHtml(r.region || "")
+    const boiler = escapeHtml(r.chaufferie || r.boilerRoom || "")
+    const types = Array.isArray(r.types) ? r.types.map(escapeHtml).join(", ") : escapeHtml(r.type || "")
+    const slotIds = Array.isArray(r.slotIds) ? r.slotIds : []
+    const totalSlots = Number.isFinite(r.totalSlots) ? r.totalSlots : slotIds.length
+    const dur = Number.isFinite(r.durationMinutes) ? r.durationMinutes : totalSlots * SLOT_MINUTES
+    const when = r.start ? fmtDate(r.start) : ""
+    const st = statusBadge(r.status)
+
+    return {
+      company, vat, phone, email, addr, region, boiler, types,
+      slotIds, totalSlots, dur, when, st,
+    }
+  }
+
+  async function loadRequests(filterStatus) {
+    // Pour éviter des index: on prend un batch et on filtre/tri côté JS
+    const snap = await requestsCol.limit(250).get()
+    const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+
+    items.sort((a, b) => {
+      const ta = a.start?.toDate ? a.start.toDate().getTime() : 0
+      const tb = b.start?.toDate ? b.start.toDate().getTime() : 0
+      return ta - tb
+    })
+
+    if (filterStatus && filterStatus !== "all") {
+      return items.filter((x) => String(x.status || "pending") === filterStatus)
+    }
+    return items
+  }
+
+  async function lockFreeSlotsForRequest(reqDoc) {
+    const slotIds = Array.isArray(reqDoc.slotIds) ? reqDoc.slotIds : []
+    if (!slotIds.length) return
+
+    const actions = []
+
+    slotIds.forEach((slotId) => {
+      const start = dateFromSlotId(slotId)
+      const end = start ? addMinutes(start, SLOT_MINUTES) : null
+
+      actions.push((batch) => {
+        const ref = freeSlotsCol.doc(slotId)
+        const payload = {
+          status: "blocked",
+          blockedReason: BLOCK_REASON.VALIDATED,
+          requestId: reqDoc.requestId || reqDoc.id,
+          updatedAt: FieldValue.serverTimestamp(),
+        }
+
+        // Si le doc n’existe pas, on le crée avec start/end (utile pour planning)
+        if (start) payload.start = firebase.firestore.Timestamp.fromDate(start)
+        if (end) payload.end = firebase.firestore.Timestamp.fromDate(end)
+        payload.createdAt = FieldValue.serverTimestamp()
+
+        batch.set(ref, payload, { merge: true })
+      })
+    })
+
+    await commitInChunks(actions, 400)
+  }
+
+  async function releaseFreeSlotsForRequest(reqDoc) {
+    const slotIds = Array.isArray(reqDoc.slotIds) ? reqDoc.slotIds : []
+    if (!slotIds.length) return
+
+    // On libère uniquement si :
+    // - status == blocked
+    // - blockedReason != outlook
+    // - et si validated : requestId correspond (pour éviter de libérer un autre dossier)
+    for (const slotId of slotIds) {
+      const ref = freeSlotsCol.doc(slotId)
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref)
+        if (!snap.exists) return
+
+        const d = snap.data() || {}
+        const status = String(d.status || "").toLowerCase()
+        const reason = String(d.blockedReason || "").toLowerCase()
+        const rid = String(d.requestId || "")
+
+        if (status !== "blocked") return
+        if (reason === BLOCK_REASON.OUTLOOK) return
+
+        if (reason === BLOCK_REASON.VALIDATED) {
+          const myRid = String(reqDoc.requestId || reqDoc.id)
+          if (rid && myRid && rid !== myRid) return
+        }
+
+        tx.set(
+          ref,
+          {
+            status: "free",
+            blockedReason: null,
+            requestId: null,
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        )
+      })
+    }
+  }
+
+  async function cleanupLocksForRequest(reqDoc, newStatus) {
+    const slotIds = Array.isArray(reqDoc.slotIds) ? reqDoc.slotIds : []
+    if (!slotIds.length) return
+
+    // 1) holds -> delete
+    // 2) bookings -> set status (admin only)
+    const actions = []
+
+    slotIds.forEach((slotId) => {
+      actions.push((batch) => batch.delete(holdsCol.doc(slotId)))
+      actions.push((batch) =>
+        batch.set(
+          bookingsCol.doc(slotId),
+          {
+            status: newStatus,
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        )
+      )
+    })
+
+    await commitInChunks(actions, 400)
+  }
+
+  async function setRequestStatus(reqDoc, newStatus, opts) {
+    const { askNote, releaseSlots } = opts || {}
+    if (!reqUiEnabled()) return
+
+    hideErr(reqMsg)
+    hideOk(reqOk)
+
+    if (!reqDoc || !reqDoc.id) {
+      showErr(reqMsg, "Demande introuvable.")
+      return
+    }
+
+    let note = ""
+    if (askNote) note = (window.prompt("Note (optionnel) :", "") || "").trim()
+
+    const isLate = newStatus === "cancelled" ? computeLateCancel(reqDoc.start) : false
+
+    try {
+      const payload = {
+        status: newStatus,
+        updatedAt: FieldValue.serverTimestamp(),
+      }
+
+      if (newStatus === "validated") {
+        payload.validatedAt = firebase.firestore.Timestamp.now()
+        payload.validatedBy = auth.currentUser?.uid || null
+      }
+
+      if (newStatus === "refused") {
+        payload.refusedAt = firebase.firestore.Timestamp.now()
+        payload.refusedBy = auth.currentUser?.uid || null
+        if (note) payload.refuseNote = note
+      }
+
+      if (newStatus === "cancelled") {
+        payload.cancelledAt = firebase.firestore.Timestamp.now()
+        payload.cancelledBy = auth.currentUser?.uid || null
+        payload.lateCancel = isLate
+        if (note) payload.cancelNote = note
+      }
+
+      await requestsCol.doc(reqDoc.id).set(payload, { merge: true })
+
+      if (newStatus === "validated") {
+        await lockFreeSlotsForRequest(reqDoc)
+        showOk(reqOk, "Demande VALIDÉE ✅ (freeSlots verrouillés: validated)")
+      } else {
+        // refus / annulation => libération + cleanup
+        await cleanupLocksForRequest(reqDoc, newStatus)
+        if (releaseSlots) await releaseFreeSlotsForRequest(reqDoc)
+
+        if (newStatus === "refused") showOk(reqOk, "Demande REFUSÉE ✅ (holds supprimés, bookings mis à jour, slots libérés si possible)")
+        else {
+          showOk(
+            reqOk,
+            isLate
+              ? "Demande ANNULÉE ✅ (⚠️ <48h) — holds supprimés, bookings mis à jour, slots libérés si possible"
+              : "Demande ANNULÉE ✅ — holds supprimés, bookings mis à jour, slots libérés si possible"
+          )
+        }
+      }
+
+      await refreshRequests()
+      await refreshPlanningWeek()
+      await refreshSyncHealthOnce()
+    } catch (e) {
+      console.error(e)
+      showErr(reqMsg, "Impossible d’appliquer l’action sur la demande (droits/réseau/rules).")
+    }
+  }
+
+  async function refreshRequests() {
+    if (!isAdmin) return
+    if (!reqList) return // pas de UI requests => no-op
+
+    hideErr(reqMsg)
+    hideOk(reqOk)
+
+    const filterStatus = reqFilter?.value || "pending"
+    const search = (document.getElementById("reqSearch")?.value || "").trim().toLowerCase()
+
+    reqList.innerHTML = `<div class="muted">Chargement…</div>`
+    if (reqEmpty) reqEmpty.hidden = true
+
+    try {
+      let items = await loadRequests(filterStatus)
+
+      if (search) {
+        items = items.filter((r) => {
+          const c = String(r.company || "").toLowerCase()
+          const v = String(r.vat || "").toLowerCase()
+          const e = String(r.email || "").toLowerCase()
+          const a = String(r.address || r.controlAddress || "").toLowerCase()
+          return c.includes(search) || v.includes(search) || e.includes(search) || a.includes(search)
+        })
+      }
+
+      if (!items.length) {
+        reqList.innerHTML = ""
+        if (reqEmpty) reqEmpty.hidden = false
+        return
+      }
+
+      reqList.innerHTML = items
+        .map((r) => {
+          const sum = requestSummary(r)
+          const rid = escapeHtml(r.requestId || r.id)
+          const uidTxt = escapeHtml(r.uid || "")
+          const slotIdsTxt = escapeHtml((sum.slotIds || []).join(", "))
+
+          const isCancelled = String(r.status || "").toLowerCase() === "cancelled"
+          const isFinal = ["validated", "refused", "cancelled"].includes(String(r.status || "").toLowerCase())
+
+          return `
+            <div class="item" data-id="${r.id}">
+              <div class="top">
+                <div>
+                  <div style="font-weight:900">${sum.when || "—"}</div>
+                  <div class="muted" style="margin-top:2px">
+                    <b>${sum.company || "(société ?)"} </b>
+                    ${sum.vat ? `— TVA: ${sum.vat}` : ``}
+                    ${sum.phone ? `— Tel: ${sum.phone}` : ``}
+                  </div>
+                  <div class="tiny">${sum.email ? `email: ${sum.email}` : ``}</div>
+                  ${sum.addr ? `<div class="tiny">Adresse: ${sum.addr}</div>` : ``}
+                  ${sum.region ? `<div class="tiny">Région: ${sum.region}</div>` : ``}
+                  ${sum.types ? `<div class="tiny">Contrôles: ${sum.types}</div>` : ``}
+                  <div class="tiny">requestId: ${rid}</div>
+                  <div class="tiny">uid: ${uidTxt}</div>
+                  <div class="tiny">slots: ${sum.totalSlots} — durée: ${sum.dur} min</div>
+                  <div class="tiny" style="white-space:pre-wrap">slotIds: ${slotIdsTxt}</div>
+                </div>
+
+                <div style="display:flex; flex-direction:column; align-items:flex-end; gap:6px">
+                  <span class="badge ${sum.st.cls}">${sum.st.txt}</span>
+                  ${r.lateCancel === true ? `<span class="badge late">⚠️ &lt;48h</span>` : ``}
+                  ${r.outlookLinked === true ? `<span class="badge validated">Outlook ✅</span>` : ``}
+                </div>
+              </div>
+
+              <div class="row" style="margin-top:10px">
+                <button class="btn good" data-action="req-validate" ${isFinal ? "disabled" : ""}>Valider</button>
+                <button class="btn bad" data-action="req-refuse" ${isFinal ? "disabled" : ""}>Refuser</button>
+                <button class="btn warn" data-action="req-cancel" ${isCancelled ? "disabled" : ""}>Annuler</button>
+              </div>
+            </div>
+          `
+        })
+        .join("")
+
+      const byId = new Map(items.map((x) => [x.id, x]))
+
+      reqList.querySelectorAll("[data-action]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          hideErr(reqMsg)
+          hideOk(reqOk)
+
+          const card = btn.closest("[data-id]")
+          const id = card?.getAttribute("data-id")
+          const action = btn.getAttribute("data-action")
+          const reqDoc = byId.get(id)
+
+          if (action === "req-validate") {
+            if (!window.confirm("Confirmer la VALIDATION ?\n→ freeSlots seront verrouillés (validated).\n→ le bureau devra encore encoder Outlook.")) return
+            return setRequestStatus(reqDoc, "validated", { releaseSlots: false })
+          }
+
+          if (action === "req-refuse") {
+            if (!window.confirm("Confirmer le REFUS ?\n→ suppression holds + bookings.status=refused\n→ libération freeSlots (si pas Outlook).")) return
+            return setRequestStatus(reqDoc, "refused", { releaseSlots: true, askNote: true })
+          }
+
+          if (action === "req-cancel") {
+            const isLate = computeLateCancel(reqDoc?.start)
+            const warning = isLate
+              ? "⚠️ Annulation à moins de 48h. Confirmer ?\n→ suppression holds + bookings.status=cancelled\n→ libération freeSlots (si pas Outlook)."
+              : "Confirmer l’annulation ?\n→ suppression holds + bookings.status=cancelled\n→ libération freeSlots (si pas Outlook)."
+            if (!window.confirm(warning)) return
+            return setRequestStatus(reqDoc, "cancelled", { releaseSlots: true, askNote: true })
+          }
+        })
+      })
+    } catch (e) {
+      console.error(e)
+      showErr(reqMsg, "Impossible de charger les demandes (requests).")
+      reqList.innerHTML = ""
+    }
+  }
+
+  // ==========================================================
+  // MODIFS
+  // ==========================================================
   async function loadModifs(filter) {
     if (!modifList) return []
     let q = modifsCol.limit(200)
@@ -961,6 +1336,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   // ========= UI EVENTS =========
   document.getElementById("btnRefresh")?.addEventListener("click", async () => {
     await refreshAppointments()
+    await refreshRequests()
     await refreshModifs()
     await refreshPlanningWeek()
     await refreshSyncHealthOnce()
@@ -973,6 +1349,14 @@ document.addEventListener("DOMContentLoaded", async () => {
     clearTimeout(_debounce)
     _debounce = setTimeout(refreshAppointments, 250)
   })
+
+  // Requests UI events (si présents)
+  reqFilter?.addEventListener("change", refreshRequests)
+  document.getElementById("reqSearch")?.addEventListener("input", () => {
+    clearTimeout(_debounce)
+    _debounce = setTimeout(refreshRequests, 250)
+  })
+  btnRefreshRequests?.addEventListener("click", refreshRequests)
 
   document.getElementById("btnRefreshModifs")?.addEventListener("click", refreshModifs)
   document.getElementById("modifFilter")?.addEventListener("change", refreshModifs)
@@ -1038,6 +1422,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     hideOk(apptOk)
     hideErr(modifMsg)
     hideOk(modifOk)
+    hideErr(reqMsg)
+    hideOk(reqOk)
     clearSlotsMsg()
 
     isAdmin = false
@@ -1047,6 +1433,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (!user) {
       setStatus(false)
       apptList.innerHTML = `<div class="muted">Veuillez vous connecter.</div>`
+      if (reqList) reqList.innerHTML = `<div class="muted">Veuillez vous connecter.</div>`
       if (modifList) modifList.innerHTML = `<div class="muted">Veuillez vous connecter.</div>`
       await refreshPlanningWeek()
       return
@@ -1062,6 +1449,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (!ok) {
       setStatus(false)
       apptList.innerHTML = `<div class="muted"><b>Accès refusé</b> : ce compte n’est pas administrateur.<br/>Retour à l’accueil…</div>`
+      if (reqList) reqList.innerHTML = `<div class="muted"><b>Accès refusé</b> : ce compte n’est pas administrateur.<br/>Retour à l’accueil…</div>`
       if (modifList) modifList.innerHTML = `<div class="muted"><b>Accès refusé</b> : ce compte n’est pas administrateur.<br/>Retour à l’accueil…</div>`
       setTimeout(() => { window.location.href = "/" }, 2000)
       return
@@ -1074,6 +1462,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     bindSyncHealthRealtime()
 
     await refreshAppointments()
+    await refreshRequests()
     await refreshModifs()
     await refreshPlanningWeek()
   })
