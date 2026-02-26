@@ -1,0 +1,173 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() { return request.auth != null; }
+    function uid() { return request.auth.uid; }
+
+    // ✅ Admin = custom claim ONLY
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.admin == true;
+    }
+
+    // slotId format: YYYYMMDD_HHMM (ex: 20260225_1100)
+    function isValidSlotId(slotId) {
+      return slotId.matches('^[0-9]{8}_[0-9]{4}$');
+    }
+
+    function isValidRequestId(rid) {
+      return rid is string && rid.size() >= 10 && rid.size() <= 80;
+    }
+
+    // 48h rule (client cannot book < 48h)
+    function isAtLeast48hInFuture(ts) {
+      return ts >= request.time + duration.value(48, 'h');
+    }
+
+    function publicSlotIsFree(slotId) {
+      return exists(/databases/$(database)/documents/publicSlots/$(slotId))
+        && get(/databases/$(database)/documents/publicSlots/$(slotId)).data.status == "free";
+    }
+
+    // ----------------------------
+    // users (CANONIQUE)
+    // doc id = uid
+    // ----------------------------
+    match /users/{userId} {
+      // client peut lire son profil
+      allow get: if isSignedIn() && userId == uid();
+      allow list: if false;
+
+      // admin peut lire n'importe quel profil
+      allow read: if isAdmin();
+
+      // client peut créer/maj son profil (SANS champ "role")
+      allow create, update: if isSignedIn()
+        && userId == uid()
+        && request.resource.data.email is string
+        && request.resource.data.company is string
+        && request.resource.data.vat is string
+        && request.resource.data.phone is string
+        && request.resource.data.hqAddress is string
+        // 🔒 interdit d’ajouter des champs sensibles côté client
+        && !("role" in request.resource.data)
+        && !("isAdmin" in request.resource.data)
+        && !("admin" in request.resource.data);
+
+      // admin peut supprimer si tu veux
+      allow delete: if isAdmin();
+    }
+
+    // ----------------------------
+    // publicSlots (PUBLIC calendar mirror) (readonly)
+    // ----------------------------
+    match /publicSlots/{slotId} {
+      allow read: if true;
+      allow create, update, delete: if false;
+    }
+
+    // ----------------------------
+    // freeSlots (INTERNAL / admin)
+    // ----------------------------
+    match /freeSlots/{slotId} {
+      allow read, create, update, delete: if isAdmin();
+    }
+
+    // ----------------------------
+    // holds (temporary lock) doc id = slotId
+    // ----------------------------
+    match /holds/{slotId} {
+      allow read: if true;
+
+      allow create: if isSignedIn()
+        && isValidSlotId(slotId)
+        && publicSlotIsFree(slotId)
+        && !exists(/databases/$(database)/documents/holds/$(slotId))
+        && request.resource.data.uid == uid()
+        && request.resource.data.start is timestamp
+        && request.resource.data.end is timestamp
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt > request.time
+        && request.resource.data.expiresAt <= request.time + duration.value(30, 'm')
+        && isAtLeast48hInFuture(request.resource.data.start)
+        && request.resource.data.status == "hold";
+
+      allow update: if false;
+
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.uid == uid());
+    }
+
+    // ----------------------------
+    // bookings (slot-level docs) doc id = slotId
+    // ----------------------------
+    match /bookings/{bookingId} {
+      allow read: if isAdmin()
+        || (isSignedIn() && resource.data.uid == uid());
+
+      allow create: if isSignedIn()
+        && isValidSlotId(bookingId)
+        && request.resource.data.slotId is string
+        && request.resource.data.slotId == bookingId
+        && request.resource.data.uid == uid()
+        && request.resource.data.status == "pending"
+        && request.resource.data.start is timestamp
+        && request.resource.data.end is timestamp
+        && isAtLeast48hInFuture(request.resource.data.start);
+
+      allow update, delete: if isAdmin();
+    }
+
+    // ----------------------------
+    // requests (source de vérité)
+    // ----------------------------
+    match /requests/{requestId} {
+      allow read: if isAdmin()
+        || (isSignedIn() && resource.data.uid == uid());
+
+      allow create: if isSignedIn()
+        && isValidRequestId(requestId)
+        && request.resource.data.requestId == requestId
+        && request.resource.data.uid == uid()
+        && request.resource.data.status == "pending"
+        && request.resource.data.start is timestamp
+        && request.resource.data.end is timestamp
+        && isAtLeast48hInFuture(request.resource.data.start)
+        && request.resource.data.slotIds is list
+        && request.resource.data.totalSlots is int
+        && request.resource.data.durationMinutes is int;
+
+      allow update, delete: if isAdmin();
+    }
+
+    // ----------------------------
+    // legacy (si tu gardes)
+    // ----------------------------
+    match /appointments/{docId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.uid == uid());
+      allow create: if isSignedIn()
+        && request.resource.data.uid == uid()
+        && request.resource.data.status == "pending"
+        && request.resource.data.start is timestamp
+        && request.resource.data.end is timestamp
+        && isAtLeast48hInFuture(request.resource.data.start);
+      allow update, delete: if isAdmin();
+    }
+
+    match /modificationRequests/{docId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.uid == uid());
+      allow create: if isSignedIn()
+        && request.resource.data.uid == uid()
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.status is string;
+      allow update, delete: if isAdmin();
+    }
+
+    match /slots/{docId} { allow read, write: if isAdmin(); }
+    match /syncHealth/{docId} { allow read, write: if isAdmin(); }
+    match /settings/{docId} { allow read, write: if isAdmin(); }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
