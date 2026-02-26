@@ -1,0 +1,31 @@
+name: Set admin claim
+
+on:
+  workflow_dispatch:
+    inputs:
+      cmd:
+        description: "grant or revoke"
+        required: true
+        default: "grant"
+      user:
+        description: "email or uid"
+        required: true
+
+jobs:
+  set-admin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install deps (if package-lock exists)
+        run: npm ci
+        continue-on-error: true
+
+      - name: Set admin claim
+        env:
+          GCP_SA_KEY_JSON: ${{ secrets.GCP_SA_KEY_JSON }}
+        run: node scripts/set-admin.mjs "${{ inputs.cmd }}" "${{ inputs.user }}"
