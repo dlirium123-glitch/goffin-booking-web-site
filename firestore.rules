@@ -1,22 +1,21 @@
-// firestore.rules
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
     // ----------------------------
-    // Helpers (auth / validation)
+    // Helpers
     // ----------------------------
     function isSignedIn() { return request.auth != null; }
     function uid() { return request.auth.uid; }
 
-    // ✅ Admin = custom claim ONLY
+    // ✅ Admin = custom claim ONLY (via GitHub Action / Admin SDK)
     function isAdmin() {
       return isSignedIn() && request.auth.token.admin == true;
     }
 
     // slotId format: YYYYMMDD_HHMM (ex: 20260225_1100)
     function isValidSlotId(slotId) {
-      return slotId.matches('^[0-9]{8}_[0-9]{4}$');
+      return slotId is string && slotId.matches('^[0-9]{8}_[0-9]{4}$');
     }
 
     function isValidRequestId(rid) {
@@ -25,42 +24,27 @@ service cloud.firestore {
 
     // 48h rule (client cannot book < 48h)
     function isAtLeast48hInFuture(ts) {
-      return ts >= request.time + duration.value(48, 'h');
+      return ts is timestamp && ts >= request.time + duration.value(48, 'h');
     }
 
-    // publicSlots guard: must exist and be free
+    // Guard: publicSlots must exist and be free
     function publicSlotIsFree(slotId) {
       return exists(/databases/$(database)/documents/publicSlots/$(slotId))
         && get(/databases/$(database)/documents/publicSlots/$(slotId)).data.status == "free";
     }
 
-    // ----------------------------
-    // Whitelists (propreté / anti-dérive)
-    // ----------------------------
-    function userKeysAreAllowed() {
+    // Strict allowlist for users profile
+    function userKeysAllowed() {
       return request.resource.data.keys().hasOnly([
         "email", "company", "vat", "phone", "hqAddress",
         "createdAt", "updatedAt"
       ]);
     }
 
-    function holdKeysAreAllowed() {
+    // Strict allowlist for hold payload
+    function holdKeysAllowed() {
       return request.resource.data.keys().hasOnly([
         "uid", "start", "end", "expiresAt", "status"
-      ]);
-    }
-
-    function bookingKeysAreAllowed() {
-      return request.resource.data.keys().hasOnly([
-        "slotId", "uid", "status", "start", "end", "createdAt"
-      ]);
-    }
-
-    function requestKeysAreAllowed() {
-      return request.resource.data.keys().hasOnly([
-        "requestId", "uid", "status", "start", "end",
-        "slotIds", "totalSlots", "durationMinutes",
-        "createdAt"
       ]);
     }
 
@@ -68,36 +52,32 @@ service cloud.firestore {
     // users (CANONIQUE) doc id = uid
     // ----------------------------
     match /users/{userId} {
-      // client peut lire son profil
+      // client can read own profile (even if it doesn't exist yet -> get only)
       allow get: if isSignedIn() && userId == uid();
       allow list: if false;
 
-      // admin peut lire n'importe quel profil
+      // admin can read all
       allow read: if isAdmin();
 
-      // client peut créer/maj son profil (sans champs sensibles)
+      // client can create/update own profile
       allow create, update: if isSignedIn()
         && userId == uid()
-        && userKeysAreAllowed()
+        && userKeysAllowed()
         && request.resource.data.email is string
         && request.resource.data.company is string
         && request.resource.data.vat is string
         && request.resource.data.phone is string
-        && request.resource.data.hqAddress is string
-        // 🔒 interdit d’ajouter des champs admin côté client
-        && !("role" in request.resource.data)
-        && !("isAdmin" in request.resource.data)
-        && !("admin" in request.resource.data);
+        && request.resource.data.hqAddress is string;
 
       allow delete: if isAdmin();
     }
 
     // ----------------------------
-    // publicSlots (PUBLIC calendar mirror) (readonly)
+    // publicSlots (PUBLIC calendar mirror) (readonly from client)
     // ----------------------------
     match /publicSlots/{slotId} {
       allow read: if true;
-      allow create, update, delete: if false;
+      allow create, update, delete: if false; // written by Admin SDK only
     }
 
     // ----------------------------
@@ -115,9 +95,9 @@ service cloud.firestore {
 
       allow create: if isSignedIn()
         && isValidSlotId(slotId)
-        && publicSlotIsFree(slotId)
+        && holdKeysAllowed()
+        && publicSlotIsFree(slotId) // ✅ anti-bypass
         && !exists(/databases/$(database)/documents/holds/$(slotId))
-        && holdKeysAreAllowed()
         && request.resource.data.uid == uid()
         && request.resource.data.start is timestamp
         && request.resource.data.end is timestamp
@@ -128,6 +108,7 @@ service cloud.firestore {
         && request.resource.data.status == "hold";
 
       allow update: if false;
+
       allow delete: if isAdmin() || (isSignedIn() && resource.data.uid == uid());
     }
 
@@ -135,11 +116,11 @@ service cloud.firestore {
     // bookings (slot-level docs) doc id = slotId
     // ----------------------------
     match /bookings/{bookingId} {
-      allow read: if isAdmin() || (isSignedIn() && resource.data.uid == uid());
+      allow read: if isAdmin()
+        || (isSignedIn() && resource.data.uid == uid());
 
       allow create: if isSignedIn()
         && isValidSlotId(bookingId)
-        && bookingKeysAreAllowed()
         && request.resource.data.slotId is string
         && request.resource.data.slotId == bookingId
         && request.resource.data.uid == uid()
@@ -152,14 +133,14 @@ service cloud.firestore {
     }
 
     // ----------------------------
-    // requests (source de vérité) doc id = requestId
+    // requests (source de vérité)
     // ----------------------------
     match /requests/{requestId} {
-      allow read: if isAdmin() || (isSignedIn() && resource.data.uid == uid());
+      allow read: if isAdmin()
+        || (isSignedIn() && resource.data.uid == uid());
 
       allow create: if isSignedIn()
         && isValidRequestId(requestId)
-        && requestKeysAreAllowed()
         && request.resource.data.requestId == requestId
         && request.resource.data.uid == uid()
         && request.resource.data.status == "pending"
@@ -174,17 +155,34 @@ service cloud.firestore {
     }
 
     // ----------------------------
-    // legacy / admin only (si tu gardes)
+    // legacy (optionnel)
     // ----------------------------
-    match /appointments/{docId} { allow read, write: if isAdmin(); }
-    match /modificationRequests/{docId} { allow read, write: if isAdmin(); }
+    match /appointments/{docId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.uid == uid());
+      allow create: if isSignedIn()
+        && request.resource.data.uid == uid()
+        && request.resource.data.status == "pending"
+        && request.resource.data.start is timestamp
+        && request.resource.data.end is timestamp
+        && isAtLeast48hInFuture(request.resource.data.start);
+      allow update, delete: if isAdmin();
+    }
+
+    match /modificationRequests/{docId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.uid == uid());
+      allow create: if isSignedIn()
+        && request.resource.data.uid == uid()
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.status is string;
+      allow update, delete: if isAdmin();
+    }
+
+    // internal admin collections
     match /slots/{docId} { allow read, write: if isAdmin(); }
     match /syncHealth/{docId} { allow read, write: if isAdmin(); }
     match /settings/{docId} { allow read, write: if isAdmin(); }
 
-    // ----------------------------
-    // fallback: deny
-    // ----------------------------
+    // fallback: deny all
     match /{document=**} {
       allow read, write: if false;
     }
