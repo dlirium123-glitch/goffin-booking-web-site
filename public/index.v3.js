@@ -6,7 +6,7 @@
   // ------------------------------------------------------------
   // Version (affichage)
   // ------------------------------------------------------------
-  const APP_VERSION = "v3-2026-02-27-PRO-clean";
+  const APP_VERSION = "v3-2026-02-27-PRO-clean+holdTx";
 
   // ------------------------------------------------------------
   // DOM helpers
@@ -19,11 +19,10 @@
   const clientVersion = $("clientVersion");
   const rightPanel = $("rightPanel");
 
-  if (clientVersion) clientVersion.textContent = APP_VERSION;
+  clientVersion.textContent = APP_VERSION;
 
   function setStatus(kind, text) {
     // kind: "ok" | "warn" | "err" | "idle"
-    if (!pillStatus || !statusText) return;
     pillStatus.classList.remove("ok", "warn", "err");
     if (kind === "ok") pillStatus.classList.add("ok");
     if (kind === "warn") pillStatus.classList.add("warn");
@@ -41,7 +40,6 @@
   }
 
   function render(html) {
-    if (!rightPanel) return;
     rightPanel.innerHTML = html;
   }
 
@@ -60,8 +58,8 @@
 
   function getApp() {
     assertFirebaseLoaded();
+    // Auto-init via /__/firebase/init.js => firebase.apps[0] existe
     if (!firebase.apps || firebase.apps.length === 0) {
-      // Fallback rare (si /__/firebase/init.js n’a pas tourné)
       firebase.initializeApp({});
     }
     return firebase.app();
@@ -71,10 +69,7 @@
     getApp();
     const auth = firebase.auth();
     const db = firebase.firestore();
-
-    // Debug-friendly
     db.settings({ ignoreUndefinedProperties: true });
-
     return { auth, db };
   }
 
@@ -97,14 +92,14 @@
   async function getAdminClaim(auth) {
     const u = auth.currentUser;
     if (!u) return false;
-    const token = await u.getIdTokenResult(true); // force refresh
+    const token = await u.getIdTokenResult(true);
     return token?.claims?.admin === true;
   }
 
   // ------------------------------------------------------------
   // User profile (users/{uid})
   // ------------------------------------------------------------
-  function buildSafeProfile(payload) {
+  function normalizeProfile(payload) {
     return {
       email: String(payload.email || ""),
       company: String(payload.company || ""),
@@ -121,7 +116,7 @@
     if (snap.exists) return;
 
     const safe = {
-      ...buildSafeProfile(payload),
+      ...normalizeProfile(payload),
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     };
@@ -134,7 +129,7 @@
     const ref = users.doc(uid);
 
     const safe = {
-      ...buildSafeProfile(payload),
+      ...normalizeProfile(payload),
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     };
 
@@ -250,12 +245,10 @@
       <p class="muted">Compte détecté ${isAdmin ? "ADMIN ✅" : "non-admin"}.</p>
       <button class="btn" ${isAdmin ? "" : "disabled"} id="btnGoAdmin">Aller sur /admin</button>
     `;
-    if (rightPanel) rightPanel.prepend(el);
+    rightPanel.prepend(el);
 
     const btn = $("btnGoAdmin");
-    if (btn && isAdmin) {
-      btn.addEventListener("click", () => (window.location.href = "/admin"));
-    }
+    if (btn && isAdmin) btn.addEventListener("click", () => (window.location.href = "/admin"));
   }
 
   // ------------------------------------------------------------
@@ -269,6 +262,12 @@
     const monday = addDays(d, diffToMonday);
     const sunday = addDays(monday, 7);
     return { start: monday, end: sunday };
+  }
+
+  function slotIsFreeStatus(status) {
+    // publicSlots.status attendu: "free" ou "busy"
+    const s = String(status || "").toLowerCase();
+    return s === "free";
   }
 
   async function loadPublicSlotsForWeek(db, weekStart, weekEnd) {
@@ -288,12 +287,22 @@
     return slots;
   }
 
-  /**
-   * ✅ Hold create-only, compatible avec Firebase compat:
-   * - Pas de docRef.create()
-   * - Transaction: check non-existence puis set()
-   */
-  async function tryCreateHold(db, auth, slot) {
+  function min48hTimestamp() {
+    return firebase.firestore.Timestamp.fromMillis(Date.now() + 48 * 3600 * 1000);
+  }
+
+  async function releaseHoldIfAny(db, holdSlotId) {
+    if (!holdSlotId) return;
+    try {
+      const { holds } = refs(db);
+      await holds.doc(holdSlotId).delete();
+    } catch (e) {
+      // Pas bloquant
+      console.warn("releaseHold failed (ignored):", e?.message || e);
+    }
+  }
+
+  async function createHoldTx(db, auth, slot) {
     const u = auth.currentUser;
     if (!u) throw new Error("Non connecté.");
 
@@ -302,7 +311,10 @@
 
     const startTs = slot.start;
     const endTs = slot.end;
-    const expiresAt = firebase.firestore.Timestamp.fromMillis(nowMs() + 20 * 60 * 1000);
+
+    // évite les soucis d’horloge client vs server :
+    // on met 15 min pour être large, et on garde la rule côté server (<= 30m).
+    const expiresAt = firebase.firestore.Timestamp.fromMillis(nowMs() + 15 * 60 * 1000);
 
     const payload = {
       uid: u.uid,
@@ -314,13 +326,12 @@
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     };
 
+    const holdRef = holds.doc(slotId);
+
     await db.runTransaction(async (tx) => {
-      const ref = holds.doc(slotId);
-      const snap = await tx.get(ref);
-      if (snap.exists) {
-        throw new Error("Ce créneau est déjà verrouillé (hold existant).");
-      }
-      tx.set(ref, payload, { merge: false });
+      const snap = await tx.get(holdRef);
+      if (snap.exists) throw new Error("Créneau déjà en hold (quelqu’un l’a pris juste avant).");
+      tx.set(holdRef, payload, { merge: false });
     });
 
     return payload;
@@ -343,6 +354,7 @@
       end: slot.end,
       requestId,
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     };
 
     const requestDoc = {
@@ -356,6 +368,7 @@
       durationMinutes: Math.round((slot.end.toMillis() - slot.start.toMillis()) / 60000),
       holdExpiresAt: holdPayload?.expiresAt || null,
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     };
 
     await db.runTransaction(async (tx) => {
@@ -363,9 +376,7 @@
       const requestRef = requests.doc(requestId);
 
       const bookingSnap = await tx.get(bookingRef);
-      if (bookingSnap.exists) {
-        throw new Error("Créneau déjà réservé (booking existant).");
-      }
+      if (bookingSnap.exists) throw new Error("Créneau déjà réservé (booking existant).");
 
       tx.set(requestRef, requestDoc, { merge: false });
       tx.set(bookingRef, bookingDoc, { merge: false });
@@ -375,34 +386,91 @@
   }
 
   // ------------------------------------------------------------
-  // Runtime
+  // Auth UI wiring
+  // ------------------------------------------------------------
+  function wireAuthHandlers(auth, db) {
+    const btnLogin = $("btnLogin");
+    const btnRegister = $("btnRegister");
+
+    if (btnLogin) {
+      btnLogin.addEventListener("click", async () => {
+        const loginErr = $("loginErr");
+        loginErr.textContent = "";
+        try {
+          const email = $("loginEmail").value.trim();
+          const pass = $("loginPass").value;
+          await auth.signInWithEmailAndPassword(email, pass);
+        } catch (e) {
+          console.error(e);
+          loginErr.textContent = e?.message || String(e);
+        }
+      });
+    }
+
+    if (btnRegister) {
+      btnRegister.addEventListener("click", async () => {
+        const regErr = $("regErr");
+        regErr.textContent = "";
+
+        const payload = {
+          email: $("regEmail").value.trim(),
+          pass: $("regPass").value,
+          company: $("regCompany").value.trim(),
+          vat: $("regVat").value.trim(),
+          phone: $("regPhone").value.trim(),
+          hqAddress: $("regAddr").value.trim(),
+        };
+
+        try {
+          const cred = await auth.createUserWithEmailAndPassword(payload.email, payload.pass);
+          await ensureUserProfile(db, cred.user.uid, payload);
+        } catch (e) {
+          console.error(e);
+          regErr.textContent = e?.message || String(e);
+        }
+      });
+    }
+  }
+
+  // ------------------------------------------------------------
+  // Main runtime
   // ------------------------------------------------------------
   async function boot() {
     const { auth, db } = getServices();
 
     setStatus("idle", "Initialisation…");
+    btnLogout.addEventListener("click", async () => {
+      await auth.signOut();
+    });
 
-    if (btnLogout) {
-      btnLogout.addEventListener("click", async () => {
-        await auth.signOut();
-      });
-    }
-
-    // Render auth first
-    renderAuthView(auth, db);
+    // Vue initiale
+    uiAuth();
+    wireAuthHandlers(auth, db);
 
     auth.onAuthStateChanged(async (user) => {
       if (!user) {
-        if (btnLogout) btnLogout.hidden = true;
+        btnLogout.hidden = true;
         setStatus("warn", "Non connecté");
-        renderAuthView(auth, db);
+        uiAuth();
+        wireAuthHandlers(auth, db);
         return;
       }
 
-      if (btnLogout) btnLogout.hidden = false;
+      btnLogout.hidden = false;
       setStatus("ok", `Connecté: ${user.email || user.uid}`);
 
-      // assure profile minimal (safe)
+      // Admin shortcut
+      let isAdmin = false;
+      try {
+        isAdmin = await getAdminClaim(auth);
+      } catch (e) {
+        console.warn("Admin claim check failed:", e);
+      }
+
+      uiBookingShell();
+      uiAdminShortcut(isAdmin);
+
+      // Si profil inexistant, on crée un squelette (safe)
       try {
         await ensureUserProfile(db, user.uid, {
           email: user.email || "",
@@ -415,22 +483,11 @@
         console.warn("ensureUserProfile minimal failed:", e);
       }
 
-      // booking UI
-      uiBookingShell();
-
-      // admin shortcut
-      let isAdmin = false;
-      try {
-        isAdmin = await getAdminClaim(auth);
-      } catch (e) {
-        console.warn("Admin claim check failed:", e);
-      }
-      uiAdminShortcut(isAdmin);
-
-      // wire booking
+      // Wire booking UI
       let weekAnchor = new Date();
       let selectedSlot = null;
       let selectedHold = null;
+      let selectedHoldSlotId = null;
 
       const weekTitle = $("weekTitle");
       const calendar = $("calendar");
@@ -440,36 +497,38 @@
       const btnConfirm = $("btnConfirm");
       const bookingErr = $("bookingErr");
 
-      async function refreshCalendar() {
-        if (bookingErr) bookingErr.textContent = "";
+      function resetSelection(msg) {
         selectedSlot = null;
         selectedHold = null;
-        if (btnConfirm) btnConfirm.disabled = true;
-        if (selectionBox) selectionBox.innerHTML = `<p class="muted">Sélectionne un créneau “Libre”.</p>`;
+        selectedHoldSlotId = null;
+        btnConfirm.disabled = true;
+        selectionBox.innerHTML = `<p class="muted">${escapeHtml(msg || "Sélectionne un créneau “Libre”.")}</p>`;
+      }
+
+      async function refreshCalendar() {
+        bookingErr.textContent = "";
+        resetSelection("Sélectionne un créneau “Libre”.");
 
         const { start, end } = computeWeekRange(weekAnchor);
         const title = `${start.toLocaleDateString()} → ${addDays(end, -1).toLocaleDateString()}`;
-        if (weekTitle) weekTitle.textContent = `Semaine: ${title}`;
+        weekTitle.textContent = `Semaine: ${title}`;
 
-        if (calendar) calendar.innerHTML = `<p class="muted">Chargement des créneaux…</p>`;
+        calendar.innerHTML = `<p class="muted">Chargement des créneaux…</p>`;
 
         let slots = [];
         try {
           slots = await loadPublicSlotsForWeek(db, start, end);
         } catch (e) {
           console.error(e);
-          if (calendar) {
-            calendar.innerHTML = `<p class="err">Erreur chargement calendrier: ${escapeHtml(e.message || String(e))}</p>`;
-          }
+          calendar.innerHTML = `<p class="err">Erreur chargement calendrier: ${escapeHtml(e.message || String(e))}</p>`;
           return;
         }
 
         if (slots.length === 0) {
-          if (calendar) calendar.innerHTML = `<p class="muted">Aucun créneau public sur cette semaine.</p>`;
+          calendar.innerHTML = `<p class="muted">Aucun créneau public sur cette semaine.</p>`;
           return;
         }
 
-        // group by day
         const byDay = new Map();
         for (const s of slots) {
           const d = s.start?.toDate?.();
@@ -495,15 +554,13 @@
             const endD = s.end.toDate();
             const hhmm = `${pad2(startD.getHours())}:${pad2(startD.getMinutes())} → ${pad2(endD.getHours())}:${pad2(endD.getMinutes())}`;
 
-            const status = (s.status || "").toLowerCase(); // "free" attendu
-            const isFree = status === "free";
-
+            const free = slotIsFreeStatus(s.status);
             html += `
-              <button class="slot ${isFree ? "free" : "busy"}"
+              <button class="slot ${free ? "free" : "busy"}"
                 data-slotid="${escapeHtml(s.id)}"
-                ${isFree ? "" : "disabled"}
-                title="${escapeHtml(status)}">
-                ${escapeHtml(hhmm)} • ${isFree ? "Libre" : "Occupé"}
+                ${free ? "" : "disabled"}
+                title="${escapeHtml(String(s.status || ""))}">
+                ${escapeHtml(hhmm)} • ${free ? "Libre" : "Occupé"}
               </button>
             `;
           }
@@ -511,141 +568,86 @@
           html += `</div></div>`;
         }
 
-        if (calendar) calendar.innerHTML = html;
+        calendar.innerHTML = html;
 
-        // click handler
-        if (!calendar) return;
         calendar.querySelectorAll("button.slot.free").forEach((btn) => {
           btn.addEventListener("click", async () => {
-            if (bookingErr) bookingErr.textContent = "";
+            bookingErr.textContent = "";
             const slotId = btn.getAttribute("data-slotid");
             const slot = slots.find((x) => x.id === slotId);
             if (!slot) return;
 
-            // 48h UX check
-            const startTs = slot.start;
-            const minTs = firebase.firestore.Timestamp.fromMillis(Date.now() + 48 * 3600 * 1000);
-            if (startTs.toMillis() < minTs.toMillis()) {
-              if (bookingErr) bookingErr.textContent = "Ce créneau est à moins de 48h. Non réservable.";
+            // UX 48h
+            const minTs = min48hTimestamp();
+            if (slot.start.toMillis() < minTs.toMillis()) {
+              bookingErr.textContent = "Ce créneau est à moins de 48h. Non réservable.";
               return;
             }
 
-            if (btnConfirm) btnConfirm.disabled = true;
-            if (selectionBox) selectionBox.innerHTML = `<p class="muted">Création d’un hold…</p>`;
+            btnConfirm.disabled = true;
+            selectionBox.innerHTML = `<p class="muted">Création d’un hold…</p>`;
+
+            // Libère l’ancien hold si tu changes de slot
+            await releaseHoldIfAny(db, selectedHoldSlotId);
 
             try {
-              const hold = await tryCreateHold(db, auth, slot);
+              const hold = await createHoldTx(db, auth, slot);
               selectedSlot = slot;
               selectedHold = hold;
+              selectedHoldSlotId = slot.id;
 
-              if (selectionBox) {
-                selectionBox.innerHTML = `
-                  <p><strong>Créneau sélectionné</strong></p>
-                  <p>${escapeHtml(slot.id)}</p>
-                  <p class="tiny muted">Hold jusqu’à: ${escapeHtml(hold.expiresAt.toDate().toLocaleString())}</p>
-                `;
-              }
-              if (btnConfirm) btnConfirm.disabled = false;
+              selectionBox.innerHTML = `
+                <p><strong>Créneau sélectionné</strong></p>
+                <p>${escapeHtml(slot.id)}</p>
+                <p class="tiny muted">Hold jusqu’à: ${escapeHtml(hold.expiresAt.toDate().toLocaleString())}</p>
+              `;
+              btnConfirm.disabled = false;
             } catch (e) {
               console.error(e);
-              if (selectionBox) selectionBox.innerHTML = `<p class="muted">Sélectionne un créneau “Libre”.</p>`;
-              if (bookingErr) bookingErr.textContent = e?.message || String(e);
+              resetSelection("Sélectionne un créneau “Libre”.");
+              bookingErr.textContent = e?.message || String(e);
             }
           });
         });
       }
 
-      if (btnPrev) {
-        btnPrev.addEventListener("click", async () => {
-          weekAnchor = addDays(weekAnchor, -7);
-          await refreshCalendar();
-        });
-      }
+      btnPrev.addEventListener("click", async () => {
+        weekAnchor = addDays(weekAnchor, -7);
+        await refreshCalendar();
+      });
 
-      if (btnNext) {
-        btnNext.addEventListener("click", async () => {
-          weekAnchor = addDays(weekAnchor, +7);
-          await refreshCalendar();
-        });
-      }
+      btnNext.addEventListener("click", async () => {
+        weekAnchor = addDays(weekAnchor, +7);
+        await refreshCalendar();
+      });
 
-      if (btnConfirm) {
-        btnConfirm.addEventListener("click", async () => {
-          if (!bookingErr) return;
-          bookingErr.textContent = "";
+      btnConfirm.addEventListener("click", async () => {
+        bookingErr.textContent = "";
+        if (!selectedSlot || !selectedHold) return;
 
-          if (!selectedSlot || !selectedHold) return;
+        btnConfirm.disabled = true;
+        selectionBox.innerHTML = `<p class="muted">Envoi de la demande…</p>`;
 
-          btnConfirm.disabled = true;
-          if (selectionBox) selectionBox.innerHTML = `<p class="muted">Envoi de la demande…</p>`;
+        try {
+          const res = await createRequestAndBooking(db, auth, selectedSlot, selectedHold);
 
-          try {
-            const res = await createRequestAndBooking(db, auth, selectedSlot, selectedHold);
-            if (selectionBox) {
-              selectionBox.innerHTML = `
-                <p><strong>Demande envoyée ✅</strong></p>
-                <p class="tiny muted">ID: ${escapeHtml(res.requestId)}</p>
-              `;
-            }
-          } catch (e) {
-            console.error(e);
-            bookingErr.textContent = e?.message || String(e);
-            btnConfirm.disabled = false;
-            if (selectionBox) selectionBox.innerHTML = `<p class="muted">Sélectionne un créneau “Libre”.</p>`;
-          }
-        });
-      }
+          // Option: tu peux supprimer le hold après création (propre)
+          await releaseHoldIfAny(db, selectedHoldSlotId);
+
+          selectionBox.innerHTML = `
+            <p><strong>Demande envoyée ✅</strong></p>
+            <p class="tiny muted">ID: ${escapeHtml(res.requestId)}</p>
+          `;
+        } catch (e) {
+          console.error(e);
+          bookingErr.textContent = e?.message || String(e);
+          btnConfirm.disabled = false;
+          selectionBox.innerHTML = `<p class="muted">Sélectionne un créneau “Libre”.</p>`;
+        }
+      });
 
       await refreshCalendar();
     });
-  }
-
-  function renderAuthView(auth, db) {
-    uiAuth();
-
-    const btnLogin = $("btnLogin");
-    const btnRegister = $("btnRegister");
-
-    if (btnLogin) {
-      btnLogin.addEventListener("click", async () => {
-        const loginErr = $("loginErr");
-        if (loginErr) loginErr.textContent = "";
-
-        const email = ($("loginEmail")?.value || "").trim();
-        const pass = $("loginPass")?.value || "";
-
-        try {
-          await auth.signInWithEmailAndPassword(email, pass);
-        } catch (e) {
-          console.error(e);
-          if (loginErr) loginErr.textContent = e?.message || String(e);
-        }
-      });
-    }
-
-    if (btnRegister) {
-      btnRegister.addEventListener("click", async () => {
-        const regErr = $("regErr");
-        if (regErr) regErr.textContent = "";
-
-        const payload = {
-          email: ($("regEmail")?.value || "").trim(),
-          pass: $("regPass")?.value || "",
-          company: ($("regCompany")?.value || "").trim(),
-          vat: ($("regVat")?.value || "").trim(),
-          phone: ($("regPhone")?.value || "").trim(),
-          hqAddress: ($("regAddr")?.value || "").trim(),
-        };
-
-        try {
-          const cred = await auth.createUserWithEmailAndPassword(payload.email, payload.pass);
-          await ensureUserProfile(db, cred.user.uid, payload);
-        } catch (e) {
-          console.error(e);
-          if (regErr) regErr.textContent = e?.message || String(e);
-        }
-      });
-    }
   }
 
   boot().catch((e) => {
