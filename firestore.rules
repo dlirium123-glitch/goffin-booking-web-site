@@ -8,12 +8,12 @@ service cloud.firestore {
     function isSignedIn() { return request.auth != null; }
     function uid() { return request.auth.uid; }
 
-    // ✅ Admin = custom claim ONLY (via GitHub Action / Admin SDK)
+    // Admin = custom claim ONLY
     function isAdmin() {
       return isSignedIn() && request.auth.token.admin == true;
     }
 
-    // slotId format: YYYYMMDD_HHMM (ex: 20260225_1100)
+    // slotId format: YYYYMMDD_HHMM
     function isValidSlotId(slotId) {
       return slotId is string && slotId.matches('^[0-9]{8}_[0-9]{4}$');
     }
@@ -22,18 +22,16 @@ service cloud.firestore {
       return rid is string && rid.size() >= 10 && rid.size() <= 80;
     }
 
-    // 48h rule (client cannot book < 48h)
     function isAtLeast48hInFuture(ts) {
       return ts is timestamp && ts >= request.time + duration.value(48, 'h');
     }
 
-    // Guard: publicSlots must exist and be free
     function publicSlotIsFree(slotId) {
       return exists(/databases/$(database)/documents/publicSlots/$(slotId))
         && get(/databases/$(database)/documents/publicSlots/$(slotId)).data.status == "free";
     }
 
-    // Strict allowlist for users profile
+    // Allowlists
     function userKeysAllowed() {
       return request.resource.data.keys().hasOnly([
         "email", "company", "vat", "phone", "hqAddress",
@@ -41,25 +39,22 @@ service cloud.firestore {
       ]);
     }
 
-    // Strict allowlist for hold payload
     function holdKeysAllowed() {
+      // Aligné avec le client: PAS de createdAt côté client
       return request.resource.data.keys().hasOnly([
         "uid", "start", "end", "expiresAt", "status"
       ]);
     }
 
     // ----------------------------
-    // users (CANONIQUE) doc id = uid
+    // users (doc id = uid)
     // ----------------------------
     match /users/{userId} {
-      // client can read own profile (even if it doesn't exist yet -> get only)
       allow get: if isSignedIn() && userId == uid();
       allow list: if false;
 
-      // admin can read all
       allow read: if isAdmin();
 
-      // client can create/update own profile
       allow create, update: if isSignedIn()
         && userId == uid()
         && userKeysAllowed()
@@ -73,22 +68,22 @@ service cloud.firestore {
     }
 
     // ----------------------------
-    // publicSlots (PUBLIC calendar mirror) (readonly from client)
+    // publicSlots (readonly client)
     // ----------------------------
     match /publicSlots/{slotId} {
       allow read: if true;
-      allow create, update, delete: if false; // written by Admin SDK only
+      allow create, update, delete: if false;
     }
 
     // ----------------------------
-    // freeSlots (INTERNAL / admin)
+    // freeSlots (admin only)
     // ----------------------------
     match /freeSlots/{slotId} {
       allow read, create, update, delete: if isAdmin();
     }
 
     // ----------------------------
-    // holds (temporary lock) doc id = slotId
+    // holds (doc id = slotId)
     // ----------------------------
     match /holds/{slotId} {
       allow read: if true;
@@ -96,7 +91,7 @@ service cloud.firestore {
       allow create: if isSignedIn()
         && isValidSlotId(slotId)
         && holdKeysAllowed()
-        && publicSlotIsFree(slotId) // ✅ anti-bypass
+        && publicSlotIsFree(slotId)
         && !exists(/databases/$(database)/documents/holds/$(slotId))
         && request.resource.data.uid == uid()
         && request.resource.data.start is timestamp
@@ -113,7 +108,7 @@ service cloud.firestore {
     }
 
     // ----------------------------
-    // bookings (slot-level docs) doc id = slotId
+    // bookings (doc id = slotId)
     // ----------------------------
     match /bookings/{bookingId} {
       allow read: if isAdmin()

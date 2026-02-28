@@ -4,9 +4,9 @@
   "use strict";
 
   // ------------------------------------------------------------
-  // Version (affichage)
+  // Version
   // ------------------------------------------------------------
-  const APP_VERSION = "v3-2026-02-27-PRO-clean+holdTx";
+  const APP_VERSION = "v3-2026-02-28-PRO-clean";
 
   // ------------------------------------------------------------
   // DOM helpers
@@ -19,10 +19,11 @@
   const clientVersion = $("clientVersion");
   const rightPanel = $("rightPanel");
 
-  clientVersion.textContent = APP_VERSION;
+  if (clientVersion) clientVersion.textContent = APP_VERSION;
 
   function setStatus(kind, text) {
     // kind: "ok" | "warn" | "err" | "idle"
+    if (!pillStatus || !statusText) return;
     pillStatus.classList.remove("ok", "warn", "err");
     if (kind === "ok") pillStatus.classList.add("ok");
     if (kind === "warn") pillStatus.classList.add("warn");
@@ -40,11 +41,8 @@
   }
 
   function render(html) {
+    if (!rightPanel) return;
     rightPanel.innerHTML = html;
-  }
-
-  function nowMs() {
-    return Date.now();
   }
 
   // ------------------------------------------------------------
@@ -58,7 +56,6 @@
 
   function getApp() {
     assertFirebaseLoaded();
-    // Auto-init via /__/firebase/init.js => firebase.apps[0] existe
     if (!firebase.apps || firebase.apps.length === 0) {
       firebase.initializeApp({});
     }
@@ -83,6 +80,7 @@
       holds: db.collection("holds"),
       bookings: db.collection("bookings"),
       requests: db.collection("requests"),
+      syncHealth: db.collection("syncHealth"),
     };
   }
 
@@ -115,25 +113,16 @@
     const snap = await ref.get();
     if (snap.exists) return;
 
-    const safe = {
-      ...normalizeProfile(payload),
-      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    };
+    const base = normalizeProfile(payload);
 
-    await ref.set(safe, { merge: false });
-  }
-
-  async function updateUserProfile(db, uid, payload) {
-    const { users } = refs(db);
-    const ref = users.doc(uid);
-
-    const safe = {
-      ...normalizeProfile(payload),
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-    };
-
-    await ref.set(safe, { merge: true });
+    await ref.set(
+      {
+        ...base,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: false }
+    );
   }
 
   // ------------------------------------------------------------
@@ -160,8 +149,17 @@
     return dow === 0 || dow === 6;
   }
 
+  function computeWeekRange(anchorDate) {
+    const d = startOfDay(anchorDate);
+    const day = d.getDay(); // 0=dim
+    const diffToMonday = (day === 0 ? -6 : 1) - day;
+    const monday = addDays(d, diffToMonday);
+    const sunday = addDays(monday, 7);
+    return { start: monday, end: sunday };
+  }
+
   // ------------------------------------------------------------
-  // UI: Auth + Booking
+  // UI blocks
   // ------------------------------------------------------------
   function uiAuth() {
     render(`
@@ -208,6 +206,9 @@
   function uiBookingShell() {
     render(`
       <h2>Étape 2/3 — Choix du créneau</h2>
+
+      <div id="syncBox" class="tiny muted" style="margin-bottom:10px;"></div>
+
       <div class="toolbar">
         <button id="btnPrev" class="btn secondary">← Semaine -1</button>
         <div>
@@ -231,9 +232,7 @@
       </div>
 
       <p id="bookingErr" class="err"></p>
-      <p class="tiny muted">
-        Tes demandes sont visibles uniquement par toi et l’administrateur.
-      </p>
+      <p class="tiny muted">Tes demandes sont visibles uniquement par toi et l’administrateur.</p>
     `);
   }
 
@@ -252,24 +251,8 @@
   }
 
   // ------------------------------------------------------------
-  // Booking logic
+  // Data: publicSlots
   // ------------------------------------------------------------
-  function computeWeekRange(anchorDate) {
-    const d = startOfDay(anchorDate);
-    // lundi comme début
-    const day = d.getDay(); // 0=dim
-    const diffToMonday = (day === 0 ? -6 : 1) - day;
-    const monday = addDays(d, diffToMonday);
-    const sunday = addDays(monday, 7);
-    return { start: monday, end: sunday };
-  }
-
-  function slotIsFreeStatus(status) {
-    // publicSlots.status attendu: "free" ou "busy"
-    const s = String(status || "").toLowerCase();
-    return s === "free";
-  }
-
   async function loadPublicSlotsForWeek(db, weekStart, weekEnd) {
     const { publicSlots } = refs(db);
     const snap = await publicSlots
@@ -278,28 +261,40 @@
       .get();
 
     const slots = [];
-    snap.forEach((doc) => {
-      const data = doc.data() || {};
-      slots.push({ id: doc.id, ...data });
-    });
-
+    snap.forEach((doc) => slots.push({ id: doc.id, ...(doc.data() || {}) }));
     slots.sort((a, b) => (a.start?.toMillis?.() || 0) - (b.start?.toMillis?.() || 0));
     return slots;
   }
 
-  function min48hTimestamp() {
-    return firebase.firestore.Timestamp.fromMillis(Date.now() + 48 * 3600 * 1000);
+  async function loadSyncHealth(db) {
+    try {
+      const { syncHealth } = refs(db);
+      const snap = await syncHealth.doc("outlook").get();
+      if (!snap.exists) return null;
+      return snap.data() || null;
+    } catch {
+      return null;
+    }
   }
 
-  async function releaseHoldIfAny(db, holdSlotId) {
-    if (!holdSlotId) return;
-    try {
-      const { holds } = refs(db);
-      await holds.doc(holdSlotId).delete();
-    } catch (e) {
-      // Pas bloquant
-      console.warn("releaseHold failed (ignored):", e?.message || e);
+  function renderSyncHealth(boxEl, data) {
+    if (!boxEl) return;
+    if (!data) {
+      boxEl.textContent = "Sync Outlook: statut inconnu.";
+      return;
     }
+    const status = String(data.status || "unknown");
+    const updatedAt = data.updatedAt?.toDate?.() ? data.updatedAt.toDate().toLocaleString() : "";
+    const busy = data.meta?.busySlots ?? data.meta?.busySlotsInRange ?? data.meta?.busy ?? null;
+    boxEl.textContent = `Sync Outlook: ${status}${updatedAt ? " • " + updatedAt : ""}${busy != null ? " • busySlots=" + busy : ""}`;
+  }
+
+  // ------------------------------------------------------------
+  // Booking primitives
+  // ------------------------------------------------------------
+  function isAtLeast48hClient(ts) {
+    const min = firebase.firestore.Timestamp.fromMillis(Date.now() + 48 * 3600 * 1000);
+    return ts.toMillis() >= min.toMillis();
   }
 
   async function createHoldTx(db, auth, slot) {
@@ -309,35 +304,28 @@
     const { holds } = refs(db);
     const slotId = slot.id;
 
-    const startTs = slot.start;
-    const endTs = slot.end;
+    const holdRef = holds.doc(slotId);
+    const expiresAt = firebase.firestore.Timestamp.fromMillis(Date.now() + 20 * 60 * 1000);
 
-    // évite les soucis d’horloge client vs server :
-    // on met 15 min pour être large, et on garde la rule côté server (<= 30m).
-    const expiresAt = firebase.firestore.Timestamp.fromMillis(nowMs() + 15 * 60 * 1000);
-
+    // IMPORTANT: respecter holdKeysAllowed() => PAS de createdAt ici
     const payload = {
       uid: u.uid,
-      start: startTs,
-      end: endTs,
+      start: slot.start,
+      end: slot.end,
       expiresAt,
       status: "hold",
-      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     };
-
-    const holdRef = holds.doc(slotId);
 
     await db.runTransaction(async (tx) => {
       const snap = await tx.get(holdRef);
-      if (snap.exists) throw new Error("Créneau déjà en hold (quelqu’un l’a pris juste avant).");
+      if (snap.exists) throw new Error("Créneau déjà verrouillé (hold existant).");
       tx.set(holdRef, payload, { merge: false });
     });
 
     return payload;
   }
 
-  async function createRequestAndBooking(db, auth, slot, holdPayload) {
+  async function createRequestAndBookingTx(db, auth, slot, holdPayload) {
     const u = auth.currentUser;
     if (!u) throw new Error("Non connecté.");
 
@@ -345,6 +333,9 @@
 
     const slotId = slot.id;
     const requestId = `REQ_${slotId}_${u.uid.slice(0, 6)}`;
+
+    const bookingRef = bookings.doc(slotId);
+    const requestRef = requests.doc(requestId);
 
     const bookingDoc = {
       slotId,
@@ -354,7 +345,6 @@
       end: slot.end,
       requestId,
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     };
 
     const requestDoc = {
@@ -368,15 +358,11 @@
       durationMinutes: Math.round((slot.end.toMillis() - slot.start.toMillis()) / 60000),
       holdExpiresAt: holdPayload?.expiresAt || null,
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     };
 
     await db.runTransaction(async (tx) => {
-      const bookingRef = bookings.doc(slotId);
-      const requestRef = requests.doc(requestId);
-
-      const bookingSnap = await tx.get(bookingRef);
-      if (bookingSnap.exists) throw new Error("Créneau déjà réservé (booking existant).");
+      const b = await tx.get(bookingRef);
+      if (b.exists) throw new Error("Créneau déjà réservé (booking existant).");
 
       tx.set(requestRef, requestDoc, { merge: false });
       tx.set(bookingRef, bookingDoc, { merge: false });
@@ -386,32 +372,214 @@
   }
 
   // ------------------------------------------------------------
-  // Auth UI wiring
+  // Booking UI controller
   // ------------------------------------------------------------
-  function wireAuthHandlers(auth, db) {
+  async function mountBookingUI({ auth, db, isAdmin }) {
+    uiBookingShell();
+    uiAdminShortcut(isAdmin);
+
+    const weekTitle = $("weekTitle");
+    const calendar = $("calendar");
+    const selectionBox = $("selectionBox");
+    const btnPrev = $("btnPrev");
+    const btnNext = $("btnNext");
+    const btnConfirm = $("btnConfirm");
+    const bookingErr = $("bookingErr");
+    const syncBox = $("syncBox");
+
+    // Show sync health (nice for debug)
+    renderSyncHealth(syncBox, await loadSyncHealth(db));
+
+    let weekAnchor = new Date();
+    let selectedSlot = null;
+    let selectedHold = null;
+
+    function resetSelection() {
+      selectedSlot = null;
+      selectedHold = null;
+      if (btnConfirm) btnConfirm.disabled = true;
+      if (selectionBox) selectionBox.innerHTML = `<p class="muted">Sélectionne un créneau “Libre”.</p>`;
+    }
+
+    async function refreshCalendar() {
+      if (bookingErr) bookingErr.textContent = "";
+      resetSelection();
+      if (!calendar) return;
+
+      const { start, end } = computeWeekRange(weekAnchor);
+      const title = `${start.toLocaleDateString()} → ${addDays(end, -1).toLocaleDateString()}`;
+      if (weekTitle) weekTitle.textContent = `Semaine: ${title}`;
+
+      calendar.innerHTML = `<p class="muted">Chargement des créneaux…</p>`;
+
+      let slots = [];
+      try {
+        slots = await loadPublicSlotsForWeek(db, start, end);
+      } catch (e) {
+        console.error(e);
+        calendar.innerHTML = `<p class="err">Erreur chargement calendrier: ${escapeHtml(e.message || String(e))}</p>`;
+        return;
+      }
+
+      if (slots.length === 0) {
+        calendar.innerHTML = `<p class="muted">Aucun créneau public sur cette semaine.</p>`;
+        return;
+      }
+
+      const byDay = new Map();
+      for (const s of slots) {
+        const d = s.start?.toDate?.();
+        if (!d) continue;
+        const key = startOfDay(d).toISOString();
+        if (!byDay.has(key)) byDay.set(key, []);
+        byDay.get(key).push(s);
+      }
+
+      const keys = Array.from(byDay.keys()).sort();
+      let html = "";
+
+      for (const dayKey of keys) {
+        const d = new Date(dayKey);
+        const dayLabel = d.toLocaleDateString(undefined, { weekday: "long", day: "2-digit", month: "2-digit" });
+        const weekend = isWeekend(d);
+
+        html += `<div class="dayBlock ${weekend ? "weekend" : ""}">
+          <div class="dayTitle">${escapeHtml(dayLabel)}</div>
+          <div class="slots">`;
+
+        for (const s of byDay.get(dayKey)) {
+          const startD = s.start.toDate();
+          const endD = s.end.toDate();
+          const hhmm = `${pad2(startD.getHours())}:${pad2(startD.getMinutes())} → ${pad2(endD.getHours())}:${pad2(endD.getMinutes())}`;
+
+          const status = String(s.status || "").toLowerCase(); // "free" | "busy"
+          const isFree = status === "free";
+          const isOk48h = isAtLeast48hClient(s.start);
+
+          const disabled = !isFree || !isOk48h;
+
+          html += `
+            <button class="slot ${!disabled ? "free" : "busy"}"
+              data-slotid="${escapeHtml(s.id)}"
+              ${disabled ? "disabled" : ""}
+              title="${escapeHtml(status)}">
+              ${escapeHtml(hhmm)} • ${!disabled ? "Libre" : "Occupé"}
+            </button>
+          `;
+        }
+
+        html += `</div></div>`;
+      }
+
+      calendar.innerHTML = html;
+
+      // Click binding (only enabled buttons exist)
+      calendar.querySelectorAll("button.slot.free").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          if (bookingErr) bookingErr.textContent = "";
+          const slotId = btn.getAttribute("data-slotid");
+          const slot = slots.find((x) => x.id === slotId);
+          if (!slot) return;
+
+          if (!isAtLeast48hClient(slot.start)) {
+            if (bookingErr) bookingErr.textContent = "Ce créneau est à moins de 48h. Non réservable.";
+            return;
+          }
+
+          resetSelection();
+          if (selectionBox) selectionBox.innerHTML = `<p class="muted">Création d’un hold…</p>`;
+          if (btnConfirm) btnConfirm.disabled = true;
+
+          try {
+            const hold = await createHoldTx(db, auth, slot);
+            selectedSlot = slot;
+            selectedHold = hold;
+
+            if (selectionBox) {
+              selectionBox.innerHTML = `
+                <p><strong>Créneau sélectionné</strong></p>
+                <p>${escapeHtml(slot.id)}</p>
+                <p class="tiny muted">Hold jusqu’à: ${escapeHtml(hold.expiresAt.toDate().toLocaleString())}</p>
+              `;
+            }
+            if (btnConfirm) btnConfirm.disabled = false;
+          } catch (e) {
+            console.error(e);
+            resetSelection();
+            if (bookingErr) bookingErr.textContent = e?.message || String(e);
+          }
+        });
+      });
+    }
+
+    if (btnPrev) {
+      btnPrev.addEventListener("click", async () => {
+        weekAnchor = addDays(weekAnchor, -7);
+        await refreshCalendar();
+      });
+    }
+
+    if (btnNext) {
+      btnNext.addEventListener("click", async () => {
+        weekAnchor = addDays(weekAnchor, +7);
+        await refreshCalendar();
+      });
+    }
+
+    if (btnConfirm) {
+      btnConfirm.addEventListener("click", async () => {
+        if (bookingErr) bookingErr.textContent = "";
+        if (!selectedSlot || !selectedHold) return;
+
+        btnConfirm.disabled = true;
+        if (selectionBox) selectionBox.innerHTML = `<p class="muted">Envoi de la demande…</p>`;
+
+        try {
+          const res = await createRequestAndBookingTx(db, auth, selectedSlot, selectedHold);
+          if (selectionBox) {
+            selectionBox.innerHTML = `
+              <p><strong>Demande envoyée ✅</strong></p>
+              <p class="tiny muted">ID: ${escapeHtml(res.requestId)}</p>
+            `;
+          }
+        } catch (e) {
+          console.error(e);
+          if (bookingErr) bookingErr.textContent = e?.message || String(e);
+          resetSelection();
+        }
+      });
+    }
+
+    await refreshCalendar();
+  }
+
+  // ------------------------------------------------------------
+  // Auth controller
+  // ------------------------------------------------------------
+  function wireAuthForm({ auth, db }) {
+    const loginEmail = $("loginEmail");
+    const loginPass = $("loginPass");
     const btnLogin = $("btnLogin");
+    const loginErr = $("loginErr");
+
     const btnRegister = $("btnRegister");
+    const regErr = $("regErr");
 
     if (btnLogin) {
       btnLogin.addEventListener("click", async () => {
-        const loginErr = $("loginErr");
-        loginErr.textContent = "";
+        if (loginErr) loginErr.textContent = "";
         try {
-          const email = $("loginEmail").value.trim();
-          const pass = $("loginPass").value;
-          await auth.signInWithEmailAndPassword(email, pass);
+          await auth.signInWithEmailAndPassword(loginEmail.value.trim(), loginPass.value);
         } catch (e) {
           console.error(e);
-          loginErr.textContent = e?.message || String(e);
+          if (loginErr) loginErr.textContent = e?.message || String(e);
         }
       });
     }
 
     if (btnRegister) {
       btnRegister.addEventListener("click", async () => {
-        const regErr = $("regErr");
-        regErr.textContent = "";
-
+        if (regErr) regErr.textContent = "";
         const payload = {
           email: $("regEmail").value.trim(),
           pass: $("regPass").value,
@@ -426,7 +594,7 @@
           await ensureUserProfile(db, cred.user.uid, payload);
         } catch (e) {
           console.error(e);
-          regErr.textContent = e?.message || String(e);
+          if (regErr) regErr.textContent = e?.message || String(e);
         }
       });
     }
@@ -439,27 +607,32 @@
     const { auth, db } = getServices();
 
     setStatus("idle", "Initialisation…");
-    btnLogout.addEventListener("click", async () => {
-      await auth.signOut();
-    });
 
-    // Vue initiale
-    uiAuth();
-    wireAuthHandlers(auth, db);
+    if (btnLogout) {
+      btnLogout.addEventListener("click", async () => {
+        await auth.signOut();
+      });
+    }
 
     auth.onAuthStateChanged(async (user) => {
       if (!user) {
-        btnLogout.hidden = true;
+        if (btnLogout) btnLogout.hidden = true;
         setStatus("warn", "Non connecté");
         uiAuth();
-        wireAuthHandlers(auth, db);
+        wireAuthForm({ auth, db });
         return;
       }
 
-      btnLogout.hidden = false;
+      if (btnLogout) btnLogout.hidden = false;
       setStatus("ok", `Connecté: ${user.email || user.uid}`);
 
-      // Admin shortcut
+      // Ensure minimal profile exists (safe)
+      try {
+        await ensureUserProfile(db, user.uid, { email: user.email || "" });
+      } catch (e) {
+        console.warn("ensureUserProfile minimal failed:", e);
+      }
+
       let isAdmin = false;
       try {
         isAdmin = await getAdminClaim(auth);
@@ -467,187 +640,12 @@
         console.warn("Admin claim check failed:", e);
       }
 
-      uiBookingShell();
-      uiAdminShortcut(isAdmin);
-
-      // Si profil inexistant, on crée un squelette (safe)
-      try {
-        await ensureUserProfile(db, user.uid, {
-          email: user.email || "",
-          company: "",
-          vat: "",
-          phone: "",
-          hqAddress: "",
-        });
-      } catch (e) {
-        console.warn("ensureUserProfile minimal failed:", e);
-      }
-
-      // Wire booking UI
-      let weekAnchor = new Date();
-      let selectedSlot = null;
-      let selectedHold = null;
-      let selectedHoldSlotId = null;
-
-      const weekTitle = $("weekTitle");
-      const calendar = $("calendar");
-      const selectionBox = $("selectionBox");
-      const btnPrev = $("btnPrev");
-      const btnNext = $("btnNext");
-      const btnConfirm = $("btnConfirm");
-      const bookingErr = $("bookingErr");
-
-      function resetSelection(msg) {
-        selectedSlot = null;
-        selectedHold = null;
-        selectedHoldSlotId = null;
-        btnConfirm.disabled = true;
-        selectionBox.innerHTML = `<p class="muted">${escapeHtml(msg || "Sélectionne un créneau “Libre”.")}</p>`;
-      }
-
-      async function refreshCalendar() {
-        bookingErr.textContent = "";
-        resetSelection("Sélectionne un créneau “Libre”.");
-
-        const { start, end } = computeWeekRange(weekAnchor);
-        const title = `${start.toLocaleDateString()} → ${addDays(end, -1).toLocaleDateString()}`;
-        weekTitle.textContent = `Semaine: ${title}`;
-
-        calendar.innerHTML = `<p class="muted">Chargement des créneaux…</p>`;
-
-        let slots = [];
-        try {
-          slots = await loadPublicSlotsForWeek(db, start, end);
-        } catch (e) {
-          console.error(e);
-          calendar.innerHTML = `<p class="err">Erreur chargement calendrier: ${escapeHtml(e.message || String(e))}</p>`;
-          return;
-        }
-
-        if (slots.length === 0) {
-          calendar.innerHTML = `<p class="muted">Aucun créneau public sur cette semaine.</p>`;
-          return;
-        }
-
-        const byDay = new Map();
-        for (const s of slots) {
-          const d = s.start?.toDate?.();
-          if (!d) continue;
-          const key = startOfDay(d).toISOString();
-          if (!byDay.has(key)) byDay.set(key, []);
-          byDay.get(key).push(s);
-        }
-
-        const keys = Array.from(byDay.keys()).sort();
-        let html = "";
-        for (const dayKey of keys) {
-          const d = new Date(dayKey);
-          const dayLabel = d.toLocaleDateString(undefined, { weekday: "long", day: "2-digit", month: "2-digit" });
-          const weekend = isWeekend(d);
-
-          html += `<div class="dayBlock ${weekend ? "weekend" : ""}">
-            <div class="dayTitle">${escapeHtml(dayLabel)}</div>
-            <div class="slots">`;
-
-          for (const s of byDay.get(dayKey)) {
-            const startD = s.start.toDate();
-            const endD = s.end.toDate();
-            const hhmm = `${pad2(startD.getHours())}:${pad2(startD.getMinutes())} → ${pad2(endD.getHours())}:${pad2(endD.getMinutes())}`;
-
-            const free = slotIsFreeStatus(s.status);
-            html += `
-              <button class="slot ${free ? "free" : "busy"}"
-                data-slotid="${escapeHtml(s.id)}"
-                ${free ? "" : "disabled"}
-                title="${escapeHtml(String(s.status || ""))}">
-                ${escapeHtml(hhmm)} • ${free ? "Libre" : "Occupé"}
-              </button>
-            `;
-          }
-
-          html += `</div></div>`;
-        }
-
-        calendar.innerHTML = html;
-
-        calendar.querySelectorAll("button.slot.free").forEach((btn) => {
-          btn.addEventListener("click", async () => {
-            bookingErr.textContent = "";
-            const slotId = btn.getAttribute("data-slotid");
-            const slot = slots.find((x) => x.id === slotId);
-            if (!slot) return;
-
-            // UX 48h
-            const minTs = min48hTimestamp();
-            if (slot.start.toMillis() < minTs.toMillis()) {
-              bookingErr.textContent = "Ce créneau est à moins de 48h. Non réservable.";
-              return;
-            }
-
-            btnConfirm.disabled = true;
-            selectionBox.innerHTML = `<p class="muted">Création d’un hold…</p>`;
-
-            // Libère l’ancien hold si tu changes de slot
-            await releaseHoldIfAny(db, selectedHoldSlotId);
-
-            try {
-              const hold = await createHoldTx(db, auth, slot);
-              selectedSlot = slot;
-              selectedHold = hold;
-              selectedHoldSlotId = slot.id;
-
-              selectionBox.innerHTML = `
-                <p><strong>Créneau sélectionné</strong></p>
-                <p>${escapeHtml(slot.id)}</p>
-                <p class="tiny muted">Hold jusqu’à: ${escapeHtml(hold.expiresAt.toDate().toLocaleString())}</p>
-              `;
-              btnConfirm.disabled = false;
-            } catch (e) {
-              console.error(e);
-              resetSelection("Sélectionne un créneau “Libre”.");
-              bookingErr.textContent = e?.message || String(e);
-            }
-          });
-        });
-      }
-
-      btnPrev.addEventListener("click", async () => {
-        weekAnchor = addDays(weekAnchor, -7);
-        await refreshCalendar();
-      });
-
-      btnNext.addEventListener("click", async () => {
-        weekAnchor = addDays(weekAnchor, +7);
-        await refreshCalendar();
-      });
-
-      btnConfirm.addEventListener("click", async () => {
-        bookingErr.textContent = "";
-        if (!selectedSlot || !selectedHold) return;
-
-        btnConfirm.disabled = true;
-        selectionBox.innerHTML = `<p class="muted">Envoi de la demande…</p>`;
-
-        try {
-          const res = await createRequestAndBooking(db, auth, selectedSlot, selectedHold);
-
-          // Option: tu peux supprimer le hold après création (propre)
-          await releaseHoldIfAny(db, selectedHoldSlotId);
-
-          selectionBox.innerHTML = `
-            <p><strong>Demande envoyée ✅</strong></p>
-            <p class="tiny muted">ID: ${escapeHtml(res.requestId)}</p>
-          `;
-        } catch (e) {
-          console.error(e);
-          bookingErr.textContent = e?.message || String(e);
-          btnConfirm.disabled = false;
-          selectionBox.innerHTML = `<p class="muted">Sélectionne un créneau “Libre”.</p>`;
-        }
-      });
-
-      await refreshCalendar();
+      await mountBookingUI({ auth, db, isAdmin });
     });
+
+    // initial view
+    uiAuth();
+    wireAuthForm({ auth, db });
   }
 
   boot().catch((e) => {
