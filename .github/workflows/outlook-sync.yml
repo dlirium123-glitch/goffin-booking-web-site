@@ -19,6 +19,11 @@ jobs:
 
     env:
       TZ: Europe/Brussels
+      # Harmonisation: on se base sur GCP_PROJECT_ID (déjà présent chez toi)
+      FIREBASE_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      OUTLOOK_ICS_URL: ${{ secrets.OUTLOOK_ICS_URL }}
+      DAYS_FORWARD: "90"
+      DEBUG_OUTLOOK_META: "1"
 
     steps:
       - name: Checkout
@@ -41,16 +46,13 @@ jobs:
         run: npm ci
 
       - name: Validate secrets (no output)
-        env:
-          OUTLOOK_ICS_URL: ${{ secrets.OUTLOOK_ICS_URL }}
-          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
         run: |
           if [ -z "$OUTLOOK_ICS_URL" ]; then
             echo "❌ Missing secret: OUTLOOK_ICS_URL"
             exit 1
           fi
           if [ -z "$FIREBASE_PROJECT_ID" ]; then
-            echo "❌ Missing secret: FIREBASE_PROJECT_ID"
+            echo "❌ Missing secret: GCP_PROJECT_ID (mapped to FIREBASE_PROJECT_ID)"
             exit 1
           fi
           echo "✅ OUTLOOK_ICS_URL present"
@@ -58,18 +60,12 @@ jobs:
 
       - name: Run sync
         working-directory: tools/outlook-sync
-        env:
-          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
-          OUTLOOK_ICS_URL: ${{ secrets.OUTLOOK_ICS_URL }}
-          DAYS_FORWARD: "90"
-          DEBUG_OUTLOOK_META: "1"
         run: node sync.js
 
       - name: Summary
         if: always()
         run: |
           echo "### 🔄 Outlook → Firestore sync" >> $GITHUB_STEP_SUMMARY
-          echo "- Project: ${{ secrets.FIREBASE_PROJECT_ID }}" >> $GITHUB_STEP_SUMMARY
           echo "- Frequency: every 30 minutes (UTC scheduler)" >> $GITHUB_STEP_SUMMARY
           echo "- DAYS_FORWARD: 90" >> $GITHUB_STEP_SUMMARY
           echo "- TZ: Europe/Brussels" >> $GITHUB_STEP_SUMMARY
