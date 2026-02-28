@@ -3,17 +3,20 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // ----------------------------
-    // Helpers
+    // Helpers (auth)
     // ----------------------------
     function isSignedIn() { return request.auth != null; }
     function uid() { return request.auth.uid; }
 
-    // Admin = custom claim ONLY
+    // ✅ Admin = custom claim ONLY (via Admin SDK / GitHub Action)
     function isAdmin() {
       return isSignedIn() && request.auth.token.admin == true;
     }
 
-    // slotId format: YYYYMMDD_HHMM
+    // ----------------------------
+    // Helpers (validation)
+    // ----------------------------
+    // slotId format: YYYYMMDD_HHMM (ex: 20260225_1100)
     function isValidSlotId(slotId) {
       return slotId is string && slotId.matches('^[0-9]{8}_[0-9]{4}$');
     }
@@ -22,16 +25,25 @@ service cloud.firestore {
       return rid is string && rid.size() >= 10 && rid.size() <= 80;
     }
 
+    // 48h rule (client cannot book < 48h)
     function isAtLeast48hInFuture(ts) {
       return ts is timestamp && ts >= request.time + duration.value(48, 'h');
     }
 
+    // Guard: publicSlots must exist and be free
     function publicSlotIsFree(slotId) {
       return exists(/databases/$(database)/documents/publicSlots/$(slotId))
         && get(/databases/$(database)/documents/publicSlots/$(slotId)).data.status == "free";
     }
 
-    // Allowlists
+    // deny if doc already exists
+    function doesNotExist(path) {
+      return !exists(path);
+    }
+
+    // ----------------------------
+    // Allowlists (keys)
+    // ----------------------------
     function userKeysAllowed() {
       return request.resource.data.keys().hasOnly([
         "email", "company", "vat", "phone", "hqAddress",
@@ -40,21 +52,49 @@ service cloud.firestore {
     }
 
     function holdKeysAllowed() {
-      // Aligné avec le client: PAS de createdAt côté client
       return request.resource.data.keys().hasOnly([
-        "uid", "start", "end", "expiresAt", "status"
+        "uid", "start", "end", "expiresAt", "status",
+        "createdAt", "updatedAt"
       ]);
     }
 
+    function bookingKeysAllowed() {
+      return request.resource.data.keys().hasOnly([
+        "slotId", "uid", "status", "start", "end", "requestId",
+        "createdAt", "updatedAt"
+      ]);
+    }
+
+    function requestKeysAllowed() {
+      return request.resource.data.keys().hasOnly([
+        "requestId", "uid", "status", "start", "end",
+        "slotIds", "totalSlots", "durationMinutes",
+        "createdAt", "updatedAt"
+      ]);
+    }
+
+    // Helper: hold must exist for this slot and belong to user, not expired
+    function hasValidHold(slotId, startTs, endTs) {
+      return exists(/databases/$(database)/documents/holds/$(slotId))
+        && get(/databases/$(database)/documents/holds/$(slotId)).data.uid == uid()
+        && get(/databases/$(database)/documents/holds/$(slotId)).data.status == "hold"
+        && get(/databases/$(database)/documents/holds/$(slotId)).data.expiresAt > request.time
+        && get(/databases/$(database)/documents/holds/$(slotId)).data.start == startTs
+        && get(/databases/$(database)/documents/holds/$(slotId)).data.end == endTs;
+    }
+
     // ----------------------------
-    // users (doc id = uid)
+    // users (CANONIQUE) doc id = uid
     // ----------------------------
     match /users/{userId} {
+      // client can read own profile (get only)
       allow get: if isSignedIn() && userId == uid();
       allow list: if false;
 
+      // admin can read all
       allow read: if isAdmin();
 
+      // client can create/update own profile
       allow create, update: if isSignedIn()
         && userId == uid()
         && userKeysAllowed()
@@ -68,31 +108,32 @@ service cloud.firestore {
     }
 
     // ----------------------------
-    // publicSlots (readonly client)
+    // publicSlots (PUBLIC calendar mirror) (readonly from client)
     // ----------------------------
     match /publicSlots/{slotId} {
       allow read: if true;
-      allow create, update, delete: if false;
+      allow create, update, delete: if false; // written by Admin SDK only
     }
 
     // ----------------------------
-    // freeSlots (admin only)
+    // freeSlots (INTERNAL / admin)
     // ----------------------------
     match /freeSlots/{slotId} {
       allow read, create, update, delete: if isAdmin();
     }
 
     // ----------------------------
-    // holds (doc id = slotId)
+    // holds (temporary lock) doc id = slotId
     // ----------------------------
     match /holds/{slotId} {
+      // public read ok (needed for transaction checks + UI if you want)
       allow read: if true;
 
       allow create: if isSignedIn()
         && isValidSlotId(slotId)
         && holdKeysAllowed()
+        && doesNotExist(/databases/$(database)/documents/holds/$(slotId))
         && publicSlotIsFree(slotId)
-        && !exists(/databases/$(database)/documents/holds/$(slotId))
         && request.resource.data.uid == uid()
         && request.resource.data.start is timestamp
         && request.resource.data.end is timestamp
@@ -104,11 +145,12 @@ service cloud.firestore {
 
       allow update: if false;
 
+      // user can delete own hold (or admin)
       allow delete: if isAdmin() || (isSignedIn() && resource.data.uid == uid());
     }
 
     // ----------------------------
-    // bookings (doc id = slotId)
+    // bookings (slot-level docs) doc id = slotId
     // ----------------------------
     match /bookings/{bookingId} {
       allow read: if isAdmin()
@@ -116,13 +158,17 @@ service cloud.firestore {
 
       allow create: if isSignedIn()
         && isValidSlotId(bookingId)
+        && bookingKeysAllowed()
+        && doesNotExist(/databases/$(database)/documents/bookings/$(bookingId))
         && request.resource.data.slotId is string
         && request.resource.data.slotId == bookingId
         && request.resource.data.uid == uid()
         && request.resource.data.status == "pending"
         && request.resource.data.start is timestamp
         && request.resource.data.end is timestamp
-        && isAtLeast48hInFuture(request.resource.data.start);
+        && isAtLeast48hInFuture(request.resource.data.start)
+        && publicSlotIsFree(bookingId)
+        && hasValidHold(bookingId, request.resource.data.start, request.resource.data.end);
 
       allow update, delete: if isAdmin();
     }
@@ -136,6 +182,8 @@ service cloud.firestore {
 
       allow create: if isSignedIn()
         && isValidRequestId(requestId)
+        && requestKeysAllowed()
+        && doesNotExist(/databases/$(database)/documents/requests/$(requestId))
         && request.resource.data.requestId == requestId
         && request.resource.data.uid == uid()
         && request.resource.data.status == "pending"
@@ -144,7 +192,13 @@ service cloud.firestore {
         && isAtLeast48hInFuture(request.resource.data.start)
         && request.resource.data.slotIds is list
         && request.resource.data.totalSlots is int
-        && request.resource.data.durationMinutes is int;
+        && request.resource.data.durationMinutes is int
+        // single-slot request (v3)
+        && request.resource.data.totalSlots == 1
+        && request.resource.data.slotIds.size() == 1
+        && isValidSlotId(request.resource.data.slotIds[0])
+        && publicSlotIsFree(request.resource.data.slotIds[0])
+        && hasValidHold(request.resource.data.slotIds[0], request.resource.data.start, request.resource.data.end);
 
       allow update, delete: if isAdmin();
     }
