@@ -1,5 +1,6 @@
 /* eslint-disable no-console */
 const { Firestore, Timestamp, FieldValue } = require("@google-cloud/firestore")
+const { slotIdFromDate, addMinutes, isWeekend } = require("../shared/slot-utils")
 
 function getEnv(name, fallback) {
   const v = process.env[name]
@@ -14,28 +15,6 @@ function parseHHMM(value) {
   const mm = Number(m[2])
   if (Number.isNaN(hh) || Number.isNaN(mm)) return null
   return hh * 60 + mm
-}
-
-function pad2(n) {
-  return String(n).padStart(2, "0")
-}
-
-function slotIdFromDate(d) {
-  const yyyy = d.getFullYear()
-  const mm = pad2(d.getMonth() + 1)
-  const dd = pad2(d.getDate())
-  const hh = pad2(d.getHours())
-  const mi = pad2(d.getMinutes())
-  return `${yyyy}${mm}${dd}_${hh}${mi}`
-}
-
-function addMinutes(d, minutes) {
-  return new Date(d.getTime() + minutes * 60000)
-}
-
-function isWeekend(d) {
-  const dow = d.getDay()
-  return dow === 0 || dow === 6
 }
 
 function buildDesiredSlots({

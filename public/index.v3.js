@@ -3,6 +3,8 @@
 (() => {
   "use strict";
 
+  const { escapeHtml, getServices, computeWeekRange, startOfDay, addDays, isWeekend } = window.GoffinBooking || {};
+
   // ------------------------------------------------------------
   // Version
   // ------------------------------------------------------------
@@ -31,15 +33,6 @@
     statusText.textContent = text;
   }
 
-  function escapeHtml(str) {
-    return String(str)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
-  }
-
   function render(html) {
     if (!rightPanel) return;
     rightPanel.innerHTML = html;
@@ -50,32 +43,7 @@
   }
 
   // ------------------------------------------------------------
-  // Firebase (Compat) bootstrap
-  // ------------------------------------------------------------
-  function assertFirebaseLoaded() {
-    if (!window.firebase) throw new Error("Firebase SDK non chargé (firebase global manquant).");
-    if (!firebase.auth) throw new Error("firebase-auth-compat non chargé.");
-    if (!firebase.firestore) throw new Error("firebase-firestore-compat non chargé.");
-  }
-
-  function getApp() {
-    assertFirebaseLoaded();
-    if (!firebase.apps || firebase.apps.length === 0) {
-      firebase.initializeApp({});
-    }
-    return firebase.app();
-  }
-
-  function getServices() {
-    getApp();
-    const auth = firebase.auth();
-    const db = firebase.firestore();
-    db.settings({ ignoreUndefinedProperties: true });
-    return { auth, db };
-  }
-
-  // ------------------------------------------------------------
-  // Firestore refs (canon)
+  // Firestore refs (canon) — spécifique client
   // ------------------------------------------------------------
   function refs(db) {
     return {
@@ -132,40 +100,6 @@
     safe.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
 
     await ref.set(safe, { merge: true });
-  }
-
-  // ------------------------------------------------------------
-  // Slots helpers
-  // ------------------------------------------------------------
-  function pad2(n) {
-    return String(n).padStart(2, "0");
-  }
-
-  function startOfDay(d) {
-    const x = new Date(d);
-    x.setHours(0, 0, 0, 0);
-    return x;
-  }
-
-  function addDays(d, days) {
-    const x = new Date(d);
-    x.setDate(x.getDate() + days);
-    return x;
-  }
-
-  function isWeekend(d) {
-    const dow = d.getDay();
-    return dow === 0 || dow === 6;
-  }
-
-  function computeWeekRange(anchorDate) {
-    const d = startOfDay(anchorDate);
-    // Monday start
-    const day = d.getDay(); // 0=Sun
-    const diffToMonday = (day === 0 ? -6 : 1) - day;
-    const monday = addDays(d, diffToMonday);
-    const sunday = addDays(monday, 7);
-    return { start: monday, end: sunday };
   }
 
   // ------------------------------------------------------------

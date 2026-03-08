@@ -3,6 +3,8 @@
 (() => {
   "use strict";
 
+  const { escapeHtml, getServices } = window.GoffinBooking || {};
+
   const APP_VERSION = "admin-v3-2026-02-27-PRO-clean";
 
   const $ = (id) => document.getElementById(id);
@@ -47,32 +49,8 @@
     statusText.textContent = text;
   }
 
-  function escapeHtml(str) {
-    return String(str)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
-  }
-
   function showOverlay(show) {
     overlay.hidden = !show;
-  }
-
-  function assertFirebaseLoaded() {
-    if (!window.firebase) throw new Error("Firebase SDK non chargé.");
-    if (!firebase.auth) throw new Error("firebase-auth-compat non chargé.");
-    if (!firebase.firestore) throw new Error("firebase-firestore-compat non chargé.");
-  }
-
-  function getServices() {
-    assertFirebaseLoaded();
-    if (!firebase.apps || firebase.apps.length === 0) firebase.initializeApp({});
-    const auth = firebase.auth();
-    const db = firebase.firestore();
-    db.settings({ ignoreUndefinedProperties: true });
-    return { auth, db };
   }
 
   function refs(db) {

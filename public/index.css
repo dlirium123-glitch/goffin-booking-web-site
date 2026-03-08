@@ -1,24 +1,7 @@
 /* =========================================================
    Goffin Booking — index.css (PRO)
-   Stable layout + UI kit minimal
+   Variables dans variables.css
    ========================================================= */
-
-:root{
-  --brand:#0b3a6e;
-  --brand2:#123c7a;
-  --bg:#f5f7fb;
-  --card:#ffffff;
-  --text:#0f172a;
-  --muted:#6b7280;
-  --line:#dbe3f0;
-
-  --ok:#16a34a;
-  --warn:#f59e0b;
-  --danger:#b91c1c;
-
-  --shadow:0 14px 28px rgba(15, 23, 42, .08);
-  --radius:16px;
-}
 
 *{ box-sizing:border-box; }
 

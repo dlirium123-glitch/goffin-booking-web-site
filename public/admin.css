@@ -1,28 +1,11 @@
 /* =========================================
    Admin — Goffin Booking (PRO)
-   Compatible admin.html + admin.v3.js
-   Version: 2026-02-16-3
+   Variables dans variables.css ; surcharges admin ci‑dessous
    ========================================= */
 
-:root{
-  --brand:#0b3a6e;
-  --brand2:#1b5fa8;
-
-  --bg:#f5f7fb;
-  --card:#ffffff;
-  --text:#0f172a;
-  --muted:#6b7280;
-
-  --line:#dbe3f0;
-  --shadow:0 14px 34px rgba(0,0,0,.10);
-  --radius:16px;
-
-  --ok:#16a34a;
-  --danger:#b91c1c;
-  --warn:#f59e0b;
-
-  --wrap: 1240px;
-  --gutter: 18px;
+:root {
+  --brand2: #1b5fa8;
+  --shadow: 0 14px 34px rgba(0, 0, 0, 0.1);
 }
 
 *{ box-sizing:border-box; }
