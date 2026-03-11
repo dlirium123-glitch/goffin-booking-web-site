@@ -3,43 +3,54 @@
 (() => {
   "use strict";
 
-  const { escapeHtml, getServices } = window.GoffinBooking || {};
+  const { escapeHtml, getServices, firestoreRefs, formatters, statuses } = window.GoffinBooking || {};
 
-  const APP_VERSION = "admin-v3-2026-02-27-PRO-clean";
-
+  const APP_VERSION = "admin-v3-2026-03-11-pro";
   const $ = (id) => document.getElementById(id);
 
   const pillStatus = $("pillStatus");
   const statusText = $("statusText");
+  const btnOpenLogin = $("btnOpenLogin");
   const btnLogout = $("btnLogout");
   const adminVersion = $("adminVersion");
-
   const overlay = $("overlay");
-  const adminEmail = $("adminEmail");
-  const adminPass = $("adminPass");
-  const btnLogin = $("btnLogin");
+  const loginEmail = $("loginEmail");
+  const loginPass = $("loginPass");
+  const btnDoLogin = $("btnDoLogin");
+  const btnCloseLogin = $("btnCloseLogin");
   const loginErr = $("loginErr");
-
-  const rowSyncHealth = $("rowSyncHealth");
+  const adminRail = $("adminRail");
+  const adminDetail = $("adminDetail");
+  const btnRefresh = $("btnRefresh");
+  const statusFilter = $("statusFilter");
+  const search = $("search");
+  const requestList = $("requestList");
+  const requestEmpty = $("requestEmpty");
+  const holdList = $("holdList");
+  const holdEmpty = $("holdEmpty");
   const syncHealthBox = $("syncHealthBox");
-
-  const rowStats = $("rowStats");
   const statUsers = $("statUsers");
   const statRequestsPending = $("statRequestsPending");
   const statHoldsActive = $("statHoldsActive");
+  const statOutboxPending = $("statOutboxPending");
+  const detailEmpty = $("detailEmpty");
+  const detailContent = $("detailContent");
+  const detailRequestTitle = $("detailRequestTitle");
+  const detailRequestMeta = $("detailRequestMeta");
+  const detailActions = $("detailActions");
+  const detailCustomer = $("detailCustomer");
+  const detailAddresses = $("detailAddresses");
+  const detailAppointments = $("detailAppointments");
+  const detailOutbox = $("detailOutbox");
 
-  const rowTools = $("rowTools");
-  const btnRefresh = $("btnRefresh");
+  if (adminVersion) adminVersion.textContent = APP_VERSION;
 
-  const rowRequests = $("rowRequests");
-  const reqList = $("reqList");
-  const reqEmpty = $("reqEmpty");
+  let selectedRequestId = null;
+  let requestsCache = [];
 
-  const rowHolds = $("rowHolds");
-  const holdList = $("holdList");
-  const holdEmpty = $("holdEmpty");
-
-  adminVersion.textContent = APP_VERSION;
+  function refs(db) {
+    return firestoreRefs.createRefs(db);
+  }
 
   function setStatus(kind, text) {
     pillStatus.classList.remove("ok", "warn", "err");
@@ -53,303 +64,486 @@
     overlay.hidden = !show;
   }
 
-  function refs(db) {
-    return {
-      users: db.collection("users"),
-      requests: db.collection("requests"),
-      holds: db.collection("holds"),
-      bookings: db.collection("bookings"),
-      syncHealth: db.collection("syncHealth"),
-      settings: db.collection("settings"),
-      slots: db.collection("slots"),
-    };
-  }
-
-  async function requireAdmin(auth) {
-    const u = auth.currentUser;
-    if (!u) return false;
-    const token = await u.getIdTokenResult(true);
-    return token?.claims?.admin === true;
-  }
-
-  function showAdminUI(show) {
-    rowSyncHealth.hidden = !show;
-    rowStats.hidden = !show;
-    rowTools.hidden = !show;
-    rowRequests.hidden = !show;
-    rowHolds.hidden = !show;
+  function showAdmin(show) {
+    adminRail.hidden = !show;
+    adminDetail.hidden = !show;
     btnLogout.hidden = !show;
   }
 
-  // ------------------------------------------------------------
-  // Rendering helpers
-  // ------------------------------------------------------------
-  function renderReqItem(req) {
-    const start = req.start?.toDate?.() ? req.start.toDate().toLocaleString() : "—";
-    const end = req.end?.toDate?.() ? req.end.toDate().toLocaleString() : "—";
-    const uid = req.uid || "—";
-    const status = req.status || "—";
-    const rid = req.requestId || req.id;
+  async function requireAdmin(auth) {
+    const user = auth.currentUser;
+    if (!user) return false;
+    const token = await user.getIdTokenResult(true);
+    return token?.claims?.admin === true;
+  }
+
+  function formatDateTime(value) {
+    const date = value?.toDate?.() || (value instanceof Date ? value : null);
+    if (!date) return "-";
+    return date.toLocaleString("fr-BE", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
+  function formatShortDate(value) {
+    const date = value?.toDate?.() || (value instanceof Date ? value : null);
+    if (!date) return "-";
+    return date.toLocaleDateString("fr-BE", {
+      weekday: "short",
+      day: "2-digit",
+      month: "2-digit",
+    });
+  }
+
+  function statusLabel(value) {
+    const labels = {
+      pending: "En attente",
+      scheduled: "Planifie",
+      completed: "Termine",
+      cancelled: "Annule",
+      sent: "Envoye",
+      failed: "Echec",
+      not_created: "Non cree",
+      created: "Cree",
+    };
+    return labels[value] || statuses.getStatusLabel?.(value) || value || "-";
+  }
+
+  function compactRequestId(value) {
+    const raw = String(value || "");
+    if (!raw) return "-";
+    return raw.length > 18 ? `${raw.slice(0, 14)}...${raw.slice(-4)}` : raw;
+  }
+
+  function renderStatusBadge(value) {
+    return `<span class="statusBadge ${escapeHtml(String(value || "").toLowerCase())}">${escapeHtml(statusLabel(value))}</span>`;
+  }
+
+  function renderRequestItem(request) {
+    const customer = request.customerSnapshot || {};
+    const label = customer.company || customer.contactName || customer.email || "Client sans nom";
+    const meta = [
+      `${request.totalAddresses || 0} adresse(s)`,
+      `${request.totalAppointments || 0} rendez-vous`,
+      formatShortDate(request.createdAt),
+    ].join(" • ");
 
     return `
-      <div class="item">
-        <div class="itemMain">
-          <div><strong>${escapeHtml(rid)}</strong></div>
-          <div class="tiny muted">${escapeHtml(uid)}</div>
-          <div class="tiny">🕒 ${escapeHtml(start)} → ${escapeHtml(end)}</div>
-          <div class="tiny">Status: <strong>${escapeHtml(status)}</strong></div>
+      <button class="requestCard ${selectedRequestId === request.id ? "selected" : ""}" data-request-id="${escapeHtml(request.id)}" type="button">
+        <div class="requestCardTop">
+          <div>
+            <p class="requestNumber">${escapeHtml(request.requestNumber || compactRequestId(request.id))}</p>
+            <div class="requestSubline">${escapeHtml(label)}</div>
+          </div>
+          ${renderStatusBadge(request.status || "pending")}
         </div>
-        <div class="itemActions">
-          <button class="btn small primary" data-act="validate" data-id="${escapeHtml(req.id)}">Valider</button>
-          <button class="btn small" data-act="refuse" data-id="${escapeHtml(req.id)}">Refuser</button>
-        </div>
-      </div>
+        <div class="requestMeta">${escapeHtml(meta)}</div>
+      </button>
     `;
   }
 
-  function renderHoldItem(h) {
-    const start = h.start?.toDate?.() ? h.start.toDate().toLocaleString() : "—";
-    const exp = h.expiresAt?.toDate?.() ? h.expiresAt.toDate().toLocaleString() : "—";
-    const uid = h.uid || "—";
-    const status = h.status || "—";
+  function renderHoldItem(hold) {
     return `
-      <div class="item">
-        <div class="itemMain">
-          <div><strong>${escapeHtml(h.id)}</strong></div>
-          <div class="tiny muted">${escapeHtml(uid)}</div>
-          <div class="tiny">Start: ${escapeHtml(start)}</div>
-          <div class="tiny">Expire: ${escapeHtml(exp)}</div>
-          <div class="tiny">Status: <strong>${escapeHtml(status)}</strong></div>
-        </div>
-        <div class="itemActions">
-          <button class="btn small" data-act="deleteHold" data-id="${escapeHtml(h.id)}">Supprimer</button>
-        </div>
-      </div>
+      <article class="holdItem">
+        <strong>${escapeHtml(hold.requestAddressTempKey || hold.id)}</strong>
+        <div class="microMeta">${escapeHtml((hold.slotIds || []).join(", "))}</div>
+        <div class="microMeta">Expire le ${escapeHtml(formatDateTime(hold.expiresAt))}</div>
+      </article>
     `;
   }
 
-  // ------------------------------------------------------------
-  // Data load
-  // ------------------------------------------------------------
+  function renderCustomerCards(customer) {
+    return `
+      <article class="customerCard">
+        <p class="customerLabel">Contact</p>
+        <div class="customerValue">${escapeHtml(customer.contactName || "-")}</div>
+        <div class="microMeta">${escapeHtml(customer.company || "-")}</div>
+      </article>
+      <article class="customerCard">
+        <p class="customerLabel">Coordonnees</p>
+        <div class="microMeta">${escapeHtml(customer.email || "-")}</div>
+        <div class="microMeta">${escapeHtml(customer.phone || "-")}</div>
+        <div class="microMeta">${escapeHtml(customer.vat || "-")}</div>
+      </article>
+    `;
+  }
+
+  function renderAddressCard(address, servicesByAddress) {
+    const services = servicesByAddress.get(address.id) || [];
+    const summary = [
+      [address.addressLine1, address.postalCode, address.city].filter(Boolean).join(", "),
+      address.region ? address.region.charAt(0).toUpperCase() + address.region.slice(1) : null,
+      `Duree ${formatters.formatMinutes(address.totalDurationMinutes || 0)}`,
+    ].filter(Boolean).join(" • ");
+
+    const serviceItems = services.map((service) => `
+      <div class="techItem">
+        <div>
+          <div class="techName">${escapeHtml(service.serviceLabelSnapshot || service.serviceTypeId)}</div>
+          <div class="microMeta">${escapeHtml(String(service.installationsCount || 0))} installation(s)</div>
+        </div>
+        <span class="tag">${escapeHtml(formatters.formatMinutes(service.serviceMinutes || 0))}</span>
+      </div>
+    `).join("");
+
+    return `
+      <article class="addressCard">
+        <div class="addressTitle">
+          <div>
+            <h4>${escapeHtml(address.label || address.addressLine1 || "Adresse d'intervention")}</h4>
+            <div class="requestSubline">${escapeHtml(summary)}</div>
+          </div>
+          ${renderStatusBadge(address.status || "pending")}
+        </div>
+        <div class="summaryPairs">
+          <span class="tag">${escapeHtml(formatters.formatMinutes(address.serviceMinutes || 0))} service</span>
+          <span class="tag">${escapeHtml(formatters.formatMinutes(address.travelMinutes || 0))} trajet</span>
+          <span class="tag">${escapeHtml(formatters.formatMinutes(address.totalDurationMinutes || 0))} total</span>
+        </div>
+        <div class="techList">${serviceItems || `<div class="microMeta">Aucune technique.</div>`}</div>
+      </article>
+    `;
+  }
+
+  function renderAppointmentCard(appointment) {
+    const timeRange = `${formatDateTime(appointment.start)} -> ${formatDateTime(appointment.end)}`;
+    const outlookLabel = appointment.outlookReference || statusLabel(appointment.outlookStatus);
+    return `
+      <article class="appointmentCard">
+        <div class="appointmentTop">
+          <div>
+            <p class="subLabel">Rendez-vous</p>
+            <h4>${escapeHtml(timeRange)}</h4>
+          </div>
+          ${renderStatusBadge(appointment.status || "pending")}
+        </div>
+        <div class="summaryPairs">
+          <span class="tag">${escapeHtml(formatters.formatMinutes(appointment.totalDurationMinutes || 0))}</span>
+          <span class="tag">${escapeHtml((appointment.slotIds || []).join(", "))}</span>
+        </div>
+        <div class="metaList">
+          <div>Email bureau : ${escapeHtml(statusLabel(appointment.officeEmailStatus))}</div>
+          <div>Mission Outlook : ${escapeHtml(outlookLabel || "-")}</div>
+        </div>
+        <div class="actionRow">
+          <button class="secondaryBtn" type="button" data-appointment-status="${appointment.id}:scheduled">Planifie</button>
+          <button class="secondaryBtn" type="button" data-appointment-status="${appointment.id}:completed">Termine</button>
+          <button class="secondaryBtn danger" type="button" data-appointment-status="${appointment.id}:cancelled">Annule</button>
+        </div>
+      </article>
+    `;
+  }
+
+  function renderOutboxCard(outbox) {
+    return `
+      <article class="outboxCard">
+        <div class="outboxTitle">
+          <div>
+            <p class="subLabel">Email bureau</p>
+            <h4>${escapeHtml(outbox.subject || "Notification")}</h4>
+          </div>
+          ${renderStatusBadge(outbox.status || "pending")}
+        </div>
+        <div class="metaList">
+          <div>Type : ${escapeHtml(outbox.type || "-")}</div>
+          <div>Tentatives : ${escapeHtml(String(outbox.attempts || 0))}</div>
+          <div>Derniere tentative : ${escapeHtml(formatDateTime(outbox.lastAttemptAt))}</div>
+          <div>Envoye le : ${escapeHtml(formatDateTime(outbox.sentAt))}</div>
+          ${outbox.error ? `<div>Echec : ${escapeHtml(outbox.error)}</div>` : ""}
+        </div>
+      </article>
+    `;
+  }
+
   async function loadSyncHealth(db) {
-    const { syncHealth } = refs(db);
-    const snap = await syncHealth.orderBy("updatedAt", "desc").limit(1).get();
-    if (snap.empty) {
-      syncHealthBox.innerHTML = `<p class="muted">Aucune donnée syncHealth.</p>`;
+    const snap = await refs(db).syncHealth.doc("outlook").get();
+    if (!snap.exists) {
+      syncHealthBox.innerHTML = `<p class="muted">Aucune information disponible pour la sync Outlook.</p>`;
       return;
     }
-    const doc = snap.docs[0];
-    const d = doc.data() || {};
-    const updated = d.updatedAt?.toDate?.() ? d.updatedAt.toDate().toLocaleString() : "—";
-    const ok = d.ok === true;
-
+    const data = snap.data() || {};
     syncHealthBox.innerHTML = `
-      <div class="pill ${ok ? "ok" : "warn"}">${ok ? "OK" : "Attention"}</div>
-      <div class="tiny muted">Dernière mise à jour: ${escapeHtml(updated)}</div>
-      <pre class="tiny">${escapeHtml(JSON.stringify(d, null, 2))}</pre>
+      <p class="panelEyebrow">Supervision</p>
+      <strong>Sync Outlook</strong>
+      <div class="metaList">
+        <div>Etat : ${escapeHtml(statusLabel(data.status || "-"))}</div>
+        <div>Derniere mise a jour : ${escapeHtml(formatDateTime(data.updatedAt))}</div>
+        ${data.reason ? `<div>Info : ${escapeHtml(data.reason)}</div>` : ""}
+      </div>
     `;
   }
 
   async function loadStats(db) {
-    const { users, requests, holds } = refs(db);
-
-    // Simple counts (non agrégé) : ok pour petit volume
-    const [usersSnap, reqSnap, holdsSnap] = await Promise.all([
-      users.limit(200).get(),
-      requests.where("status", "==", "pending").limit(200).get(),
-      holds.limit(200).get(),
+    const collections = refs(db);
+    const [usersSnap, requestsSnap, holdsSnap, outboxSnap] = await Promise.all([
+      collections.users.limit(200).get(),
+      collections.requests.where("status", "==", "pending").limit(200).get(),
+      collections.holds.limit(200).get(),
+      collections.outbox.where("status", "==", "pending").limit(200).get(),
     ]);
 
     statUsers.textContent = String(usersSnap.size);
-    statRequestsPending.textContent = String(reqSnap.size);
+    statRequestsPending.textContent = String(requestsSnap.size);
+    statOutboxPending.textContent = String(outboxSnap.size);
 
-    // holds actifs = expiresAt > now
-    const nowTs = firebase.firestore.Timestamp.now();
-    let active = 0;
-    holdsSnap.forEach((d) => {
-      const x = d.data() || {};
-      if (x.expiresAt && x.expiresAt.toMillis() > nowTs.toMillis()) active += 1;
+    let activeHolds = 0;
+    const now = Date.now();
+    holdsSnap.forEach((doc) => {
+      const data = doc.data() || {};
+      if (data.expiresAt?.toMillis?.() > now) activeHolds += 1;
     });
-    statHoldsActive.textContent = String(active);
+    statHoldsActive.textContent = String(activeHolds);
   }
 
   async function loadRequests(db) {
-    const { requests } = refs(db);
-    const snap = await requests.orderBy("createdAt", "desc").limit(50).get();
+    const snap = await refs(db).requests.orderBy("createdAt", "desc").limit(60).get();
+    requestsCache = snap.docs.map((doc) => ({ id: doc.id, ...(doc.data() || {}) }));
 
-    if (snap.empty) {
-      reqEmpty.hidden = false;
-      reqList.innerHTML = "";
-      return;
+    const filter = statusFilter.value;
+    const term = String(search.value || "").trim().toLowerCase();
+    const filtered = requestsCache.filter((request) => {
+      const haystack = [
+        request.requestNumber,
+        request.customerSnapshot?.company,
+        request.customerSnapshot?.email,
+        request.customerSnapshot?.contactName,
+      ].filter(Boolean).join(" ").toLowerCase();
+      return (filter === "all" || request.status === filter) && (!term || haystack.includes(term));
+    });
+
+    requestEmpty.hidden = filtered.length > 0;
+    requestList.innerHTML = filtered.map(renderRequestItem).join("");
+    if (!selectedRequestId && filtered.length > 0) selectedRequestId = filtered[0].id;
+    if (selectedRequestId && !filtered.some((request) => request.id === selectedRequestId)) {
+      selectedRequestId = filtered[0]?.id || null;
     }
-
-    reqEmpty.hidden = true;
-    const items = [];
-    snap.forEach((doc) => items.push({ id: doc.id, ...doc.data() }));
-
-    reqList.innerHTML = items.map(renderReqItem).join("");
   }
 
   async function loadHolds(db) {
-    const { holds } = refs(db);
-    const snap = await holds.orderBy("expiresAt", "desc").limit(50).get();
+    const snap = await refs(db).holds.orderBy("expiresAt", "desc").limit(20).get();
+    const now = Date.now();
+    const items = snap.docs
+      .map((doc) => ({ id: doc.id, ...(doc.data() || {}) }))
+      .filter((item) => item.expiresAt?.toMillis?.() > now);
 
-    if (snap.empty) {
-      holdEmpty.hidden = false;
-      holdList.innerHTML = "";
+    holdEmpty.hidden = items.length > 0;
+    holdList.innerHTML = items.map(renderHoldItem).join("");
+  }
+
+  async function loadRequestDetail(db, requestId) {
+    if (!requestId) {
+      detailEmpty.hidden = false;
+      detailContent.hidden = true;
       return;
     }
 
-    holdEmpty.hidden = true;
-    const items = [];
-    snap.forEach((doc) => items.push({ id: doc.id, ...doc.data() }));
+    const collections = refs(db);
+    const requestSnap = await collections.requests.doc(requestId).get();
+    if (!requestSnap.exists) {
+      detailEmpty.hidden = false;
+      detailContent.hidden = true;
+      return;
+    }
 
-    holdList.innerHTML = items.map(renderHoldItem).join("");
+    const request = { id: requestSnap.id, ...(requestSnap.data() || {}) };
+    const [addressesSnap, servicesSnap, appointmentsSnap, outboxSnap] = await Promise.all([
+      collections.requestAddresses.where("requestId", "==", requestId).get(),
+      collections.requestServices.where("requestId", "==", requestId).get(),
+      collections.appointments.where("requestId", "==", requestId).get(),
+      collections.outbox.where("requestId", "==", requestId).get(),
+    ]);
+
+    const addresses = addressesSnap.docs.map((doc) => ({ id: doc.id, ...(doc.data() || {}) }));
+    const services = servicesSnap.docs.map((doc) => ({ id: doc.id, ...(doc.data() || {}) }));
+    const appointments = appointmentsSnap.docs.map((doc) => ({ id: doc.id, ...(doc.data() || {}) }));
+    const outbox = outboxSnap.docs.map((doc) => ({ id: doc.id, ...(doc.data() || {}) }));
+
+    const servicesByAddress = new Map();
+    addresses.forEach((address) => servicesByAddress.set(address.id, []));
+    services.forEach((service) => {
+      const items = servicesByAddress.get(service.requestAddressId) || [];
+      items.push(service);
+      servicesByAddress.set(service.requestAddressId, items);
+    });
+
+    detailEmpty.hidden = true;
+    detailContent.hidden = false;
+    detailRequestTitle.textContent = request.requestNumber || compactRequestId(request.id);
+    detailRequestMeta.textContent = [
+      request.customerSnapshot?.company || request.customerSnapshot?.contactName || "Client",
+      request.customerSnapshot?.contactName || "",
+      request.customerSnapshot?.email || "",
+      `${request.totalAddresses || 0} adresse(s)`,
+      `${request.totalAppointments || 0} rendez-vous`,
+    ].filter(Boolean).join(" • ");
+
+    detailActions.innerHTML = `
+      <button class="secondaryBtn" type="button" data-request-status="${request.id}:scheduled">Marquer planifie</button>
+      <button class="secondaryBtn" type="button" data-request-status="${request.id}:completed">Marquer termine</button>
+      <button class="secondaryBtn danger" type="button" data-request-status="${request.id}:cancelled">Annuler</button>
+    `;
+
+    detailCustomer.innerHTML = renderCustomerCards(request.customerSnapshot || {});
+    detailAddresses.innerHTML = addresses.map((address) => renderAddressCard(address, servicesByAddress)).join("") || `<p class="muted">Aucune adresse.</p>`;
+    detailAppointments.innerHTML = appointments.map(renderAppointmentCard).join("") || `<p class="muted">Aucun rendez-vous.</p>`;
+    detailOutbox.innerHTML = outbox.map(renderOutboxCard).join("") || `<p class="muted">Aucun email de bureau pour cette demande.</p>`;
   }
 
   async function refreshAll(db) {
     await Promise.all([loadSyncHealth(db), loadStats(db), loadRequests(db), loadHolds(db)]);
+    await loadRequestDetail(db, selectedRequestId);
   }
 
-  // ------------------------------------------------------------
-  // Actions
-  // ------------------------------------------------------------
-  async function setRequestStatus(db, requestId, newStatus) {
-    const { requests } = refs(db);
-    const ref = requests.doc(requestId);
+  async function updateRequestStatus(db, requestId, status) {
+    await refs(db).requests.doc(requestId).set({
+      status,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+  }
 
-    await ref.set(
-      {
-        status: newStatus,
+  async function updateAppointmentsForRequest(db, requestId, status) {
+    const snap = await refs(db).appointments.where("requestId", "==", requestId).get();
+    const batch = db.batch();
+    snap.forEach((doc) => {
+      batch.set(doc.ref, {
+        status,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
+      }, { merge: true });
+    });
+    await batch.commit();
   }
 
-  async function deleteHold(db, slotId) {
-    const { holds } = refs(db);
-    await holds.doc(slotId).delete();
+  async function updateAppointmentStatus(db, appointmentId, status) {
+    await refs(db).appointments.doc(appointmentId).set({
+      status,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
   }
 
-  function wireActionDelegation(db) {
-    reqList.addEventListener("click", async (ev) => {
-      const btn = ev.target?.closest?.("button[data-act]");
-      if (!btn) return;
+  function wireDelegation(db) {
+    requestList.addEventListener("click", async (event) => {
+      const button = event.target.closest("[data-request-id]");
+      if (!button) return;
+      selectedRequestId = button.getAttribute("data-request-id");
+      await loadRequests(db);
+      await loadRequestDetail(db, selectedRequestId);
+    });
 
-      const act = btn.getAttribute("data-act");
-      const id = btn.getAttribute("data-id");
-      if (!id) return;
-
-      btn.disabled = true;
+    detailActions.addEventListener("click", async (event) => {
+      const button = event.target.closest("[data-request-status]");
+      if (!button) return;
+      const [requestId, status] = button.getAttribute("data-request-status").split(":");
+      button.disabled = true;
       try {
-        if (act === "validate") await setRequestStatus(db, id, "validated");
-        if (act === "refuse") await setRequestStatus(db, id, "refused");
+        await updateRequestStatus(db, requestId, status);
+        await updateAppointmentsForRequest(db, requestId, status);
         await refreshAll(db);
-      } catch (e) {
-        console.error(e);
-        alert(e?.message || String(e));
+      } catch (error) {
+        console.error(error);
+        alert(error?.message || String(error));
       } finally {
-        btn.disabled = false;
+        button.disabled = false;
       }
     });
 
-    holdList.addEventListener("click", async (ev) => {
-      const btn = ev.target?.closest?.("button[data-act]");
-      if (!btn) return;
-
-      const act = btn.getAttribute("data-act");
-      const id = btn.getAttribute("data-id");
-      if (!id) return;
-
-      btn.disabled = true;
+    detailAppointments.addEventListener("click", async (event) => {
+      const button = event.target.closest("[data-appointment-status]");
+      if (!button) return;
+      const [appointmentId, status] = button.getAttribute("data-appointment-status").split(":");
+      button.disabled = true;
       try {
-        if (act === "deleteHold") await deleteHold(db, id);
+        await updateAppointmentStatus(db, appointmentId, status);
         await refreshAll(db);
-      } catch (e) {
-        console.error(e);
-        alert(e?.message || String(e));
+      } catch (error) {
+        console.error(error);
+        alert(error?.message || String(error));
       } finally {
-        btn.disabled = false;
+        button.disabled = false;
       }
     });
   }
 
-  // ------------------------------------------------------------
-  // Boot
-  // ------------------------------------------------------------
   async function boot() {
     const { auth, db } = getServices();
 
-    setStatus("idle", "Initialisation…");
-    showAdminUI(false);
+    setStatus("idle", "Initialisation...");
+    showAdmin(false);
     showOverlay(false);
+
+    btnOpenLogin.addEventListener("click", () => {
+      loginErr.hidden = true;
+      loginErr.textContent = "";
+      showOverlay(true);
+    });
+
+    btnCloseLogin.addEventListener("click", () => showOverlay(false));
+
+    btnDoLogin.addEventListener("click", async () => {
+      loginErr.hidden = true;
+      loginErr.textContent = "";
+      try {
+        await auth.signInWithEmailAndPassword(loginEmail.value.trim(), loginPass.value);
+        showOverlay(false);
+      } catch (error) {
+        console.error(error);
+        loginErr.hidden = false;
+        loginErr.textContent = error?.message || String(error);
+      }
+    });
 
     btnLogout.addEventListener("click", async () => {
       await auth.signOut();
     });
 
-    btnLogin.addEventListener("click", async () => {
-      loginErr.textContent = "";
-      showOverlay(true);
-      try {
-        await auth.signInWithEmailAndPassword(adminEmail.value.trim(), adminPass.value);
-      } catch (e) {
-        console.error(e);
-        loginErr.textContent = e?.message || String(e);
-      } finally {
-        showOverlay(false);
-      }
-    });
-
     btnRefresh.addEventListener("click", async () => {
-      showOverlay(true);
-      try {
-        await refreshAll(db);
-      } catch (e) {
-        console.error(e);
-        alert(e?.message || String(e));
-      } finally {
-        showOverlay(false);
-      }
+      await refreshAll(db);
     });
 
-    wireActionDelegation(db);
+    statusFilter.addEventListener("change", async () => {
+      await loadRequests(db);
+      await loadRequestDetail(db, selectedRequestId);
+    });
+
+    search.addEventListener("input", async () => {
+      await loadRequests(db);
+      await loadRequestDetail(db, selectedRequestId);
+    });
+
+    wireDelegation(db);
 
     auth.onAuthStateChanged(async (user) => {
       if (!user) {
-        setStatus("warn", "Non connecté");
-        showAdminUI(false);
+        setStatus("warn", "Non connecte");
+        showAdmin(false);
+        selectedRequestId = null;
         return;
       }
 
-      setStatus("ok", `Connecté: ${user.email || user.uid}`);
-
-      // HARD GATE: admin claim
-      showOverlay(true);
-      try {
-        const ok = await requireAdmin(auth);
-        if (!ok) {
-          setStatus("err", "Accès refusé (pas admin)");
-          showAdminUI(false);
-          loginErr.textContent = "Ce compte n’a pas le claim admin.";
-          // Option: redirect home
-          // window.location.href = "/";
-          return;
-        }
-
-        loginErr.textContent = "";
-        showAdminUI(true);
-        await refreshAll(db);
-      } finally {
-        showOverlay(false);
+      setStatus("ok", `Connecte : ${user.email || user.uid}`);
+      const isAdmin = await requireAdmin(auth);
+      if (!isAdmin) {
+        setStatus("err", "Acces refuse");
+        showAdmin(false);
+        loginErr.hidden = false;
+        loginErr.textContent = "Ce compte n'a pas le claim admin.";
+        showOverlay(true);
+        return;
       }
+
+      loginErr.hidden = true;
+      showAdmin(true);
+      await refreshAll(db);
     });
   }
 
-  boot().catch((e) => {
-    console.error(e);
+  boot().catch((error) => {
+    console.error(error);
     setStatus("err", "Erreur init");
-    loginErr.textContent = e?.message || String(e);
+    loginErr.hidden = false;
+    loginErr.textContent = error?.message || String(error);
   });
 })();

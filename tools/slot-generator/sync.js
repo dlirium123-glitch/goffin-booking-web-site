@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 const { Firestore, Timestamp, FieldValue } = require("@google-cloud/firestore")
-const { slotIdFromDate, addMinutes, isWeekend } = require("../shared/slot-utils")
+const { slotIdFromDate, addMinutes, addLocalDays, isWeekend } = require("../shared/slot-utils")
 
 function getEnv(name, fallback) {
   const v = process.env[name]
@@ -26,11 +26,11 @@ function buildDesiredSlots({
   dayEndMin
 }) {
   const lastStartMin = dayEndMin - slotMinutes
-  const startDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + startOffsetDays)
+  const startDay = addLocalDays(now, startOffsetDays)
 
   const desired = []
   for (let i = 0; i < daysForward; i++) {
-    const day = new Date(startDay.getFullYear(), startDay.getMonth(), startDay.getDate() + i)
+    const day = addLocalDays(startDay, i)
     if (isWeekend(day)) continue
 
     for (let mins = dayStartMin; mins <= lastStartMin; mins += slotMinutes) {
@@ -137,8 +137,8 @@ async function main() {
   const publicSlotsCol = db.collection("publicSlots")  // public (client)
 
   const now = new Date()
-  const fromDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + startOffsetDays)
-  const toDate = new Date(fromDate.getTime() + daysForward * 24 * 60 * 60000)
+  const fromDate = addLocalDays(now, startOffsetDays)
+  const toDate = addLocalDays(fromDate, daysForward)
 
   console.log("Generate slots", {
     projectId,

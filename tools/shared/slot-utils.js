@@ -33,6 +33,14 @@ function addMinutes(d, minutes) {
   return new Date(d.getTime() + minutes * 60000);
 }
 
+function startOfLocalDay(d) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+}
+
+function addLocalDays(d, days) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + days, 0, 0, 0, 0);
+}
+
 function isWeekend(d) {
   const dow = d.getDay();
   return dow === 0 || dow === 6;
@@ -43,5 +51,7 @@ module.exports = {
   slotIdFromDate,
   dateFromSlotId,
   addMinutes,
+  startOfLocalDay,
+  addLocalDays,
   isWeekend,
 };

@@ -3,192 +3,218 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Admin — Goffin Booking</title>
-
-  <!-- ✅ évite l’indexation -->
+  <title>Admin - Goffin Booking</title>
   <meta name="robots" content="noindex,nofollow" />
 
   <link rel="stylesheet" href="/variables.css?v=2026-03-08-1" />
-  <link rel="stylesheet" href="/admin.css?v=2026-03-08-1" />
+  <link rel="stylesheet" href="/admin.css?v=2026-03-11-1" />
 
-  <!-- Firebase (Compat) -->
   <script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <script defer src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
   <script defer src="/__/firebase/init.js"></script>
   <script defer src="/shared.js?v=2026-03-08-1"></script>
+  <script defer src="/scripts/shared/service-catalog.js?v=2026-03-10-1"></script>
+  <script defer src="/scripts/shared/duration-engine.js?v=2026-03-10-1"></script>
+  <script defer src="/scripts/shared/validation.js?v=2026-03-10-1"></script>
+  <script defer src="/scripts/shared/status.js?v=2026-03-10-1"></script>
+  <script defer src="/scripts/shared/formatters.js?v=2026-03-10-1"></script>
+  <script defer src="/scripts/shared/firestore-refs.js?v=2026-03-10-1"></script>
 </head>
 
 <body>
-<noscript>
-  <div style="padding:12px; font-weight:900;">
-    JavaScript est requis pour accéder à l’admin.
-  </div>
-</noscript>
-
-<header>
-  <div class="topbar">
-    <div class="brand">
-      <h1>Admin — Goffin Booking</h1>
-      <p>Gestion des rendez-vous & planning</p>
-      <p class="tiny versionLine">
-        Version : <span id="adminVersion">—</span>
-      </p>
+<header class="adminHeader">
+  <div class="adminHeaderInner">
+    <div class="brandBlock">
+      <p class="headerEyebrow">Back-office</p>
+      <h1>Planning et demandes</h1>
+      <p class="headerLead">Vue bureau des demandes clients, des rendez-vous, de l'envoi email et du suivi Outlook.</p>
     </div>
 
-    <div class="status">
-      <span class="pill" id="pillStatus">
-        <span class="dot"></span>
-        <span id="statusText">Non connecté</span>
-      </span>
-      <button class="btnTop" id="btnLogin" type="button">Connexion</button>
-      <button class="btnTop secondary" id="btnLogout" type="button" hidden>Déconnexion</button>
+    <div class="headerTools">
+      <div class="statusPill" id="pillStatus">
+        <span class="statusDot"></span>
+        <span id="statusText">Non connecte</span>
+      </div>
+      <button class="headerBtn" id="btnOpenLogin" type="button">Connexion</button>
+      <button class="headerBtn ghost" id="btnLogout" type="button" hidden>Deconnexion</button>
     </div>
   </div>
 </header>
 
-<main>
-  <div class="grid">
-
-    <!-- LEFT -->
-    <section class="card">
-      <h2>Rendez-vous</h2>
-
-      <div class="row">
+<main class="adminMain">
+  <section class="workspace" id="adminRail" hidden>
+    <aside class="controlPanel">
+      <div class="panelCard heroCard">
         <div>
-          <div class="tiny fieldTitle">Filtre statut</div>
-          <select id="statusFilter">
-            <option value="pending">En attente</option>
-            <option value="validated">Validés</option>
-            <option value="refused">Refusés</option>
-            <option value="cancelled">Annulés</option>
-            <option value="all">Tous</option>
-          </select>
+          <p class="panelEyebrow">Centre de controle</p>
+          <h2>Demandes actives</h2>
+          <p class="muted">Trie les dossiers, surveille la sync et retrouve vite un rendez-vous a traiter.</p>
+        </div>
+        <button class="primaryBtn" id="btnRefresh" type="button">Rafraichir</button>
+      </div>
+
+      <div class="kpiGrid">
+        <article class="kpiCard">
+          <span class="kpiLabel">Clients</span>
+          <strong id="statUsers">-</strong>
+        </article>
+        <article class="kpiCard">
+          <span class="kpiLabel">En attente</span>
+          <strong id="statRequestsPending">-</strong>
+        </article>
+        <article class="kpiCard">
+          <span class="kpiLabel">Holds actifs</span>
+          <strong id="statHoldsActive">-</strong>
+        </article>
+        <article class="kpiCard accent">
+          <span class="kpiLabel">Emails a envoyer</span>
+          <strong id="statOutboxPending">-</strong>
+        </article>
+      </div>
+
+      <div class="panelCard syncCard" id="syncHealthBox"></div>
+
+      <div class="panelCard filtersCard">
+        <div class="filterRow">
+          <label class="fieldBlock">
+            <span class="fieldLabel">Statut</span>
+            <select id="statusFilter">
+              <option value="all">Tous</option>
+              <option value="pending">En attente</option>
+              <option value="scheduled">Planifie</option>
+              <option value="completed">Termine</option>
+              <option value="cancelled">Annule</option>
+            </select>
+          </label>
+          <label class="fieldBlock">
+            <span class="fieldLabel">Recherche</span>
+            <input id="search" type="text" placeholder="Numero, client, email, ville..." />
+          </label>
+        </div>
+      </div>
+
+      <div class="panelCard listCard">
+        <div class="cardTopline">
+          <div>
+            <p class="panelEyebrow">Dossiers</p>
+            <h3>Demandes client</h3>
+          </div>
+        </div>
+        <div id="requestList" class="requestList"></div>
+        <p id="requestEmpty" class="muted" hidden>Aucune demande pour ce filtre.</p>
+      </div>
+
+      <div class="panelCard sideSplit">
+        <div>
+          <div class="cardTopline">
+            <div>
+              <p class="panelEyebrow">Verrous</p>
+              <h3>Holds actifs</h3>
+            </div>
+          </div>
+          <div id="holdList" class="holdList"></div>
+          <p id="holdEmpty" class="muted" hidden>Aucun hold actif.</p>
         </div>
 
         <div>
-          <div class="tiny fieldTitle">Recherche (note / email)</div>
-          <input id="search" placeholder="Ex: chaudière, adresse, @..." />
+          <div class="cardTopline">
+            <div>
+              <p class="panelEyebrow">Outils</p>
+              <h3>Actions rapides</h3>
+            </div>
+          </div>
+          <div class="toolStack">
+            <a class="secondaryBtn" href="https://github.com/dlirium123-glitch/goffin-booking-web-site/actions/workflows/outlook-sync.yml" target="_blank" rel="noopener noreferrer">Lancer Outlook sync</a>
+            <a class="secondaryBtn" href="https://github.com/dlirium123-glitch/goffin-booking-web-site/actions/workflows/send-emails.yml" target="_blank" rel="noopener noreferrer">Lancer l'envoi email</a>
+            <a class="secondaryBtn" href="https://github.com/dlirium123-glitch/goffin-booking-web-site/actions" target="_blank" rel="noopener noreferrer">Voir tous les workflows</a>
+          </div>
         </div>
+      </div>
+    </aside>
 
-        <div class="rowEnd">
-          <button class="btn primary" id="btnRefresh" type="button">Rafraîchir</button>
+    <section class="detailPanel" id="adminDetail" hidden>
+      <div id="detailEmpty" class="emptyStateCard">
+        <p class="panelEyebrow">Detail</p>
+        <h2>Selectionne une demande</h2>
+        <p class="muted">Tu verras ici le client, l'adresse d'intervention, les techniques, le rendez-vous et le suivi bureau.</p>
+      </div>
+
+      <div id="detailContent" hidden>
+        <section class="detailHero">
+          <div class="detailHeroMain">
+            <p class="panelEyebrow">Demande</p>
+            <h2 id="detailRequestTitle">-</h2>
+            <p class="detailHeroMeta" id="detailRequestMeta"></p>
+          </div>
+          <div class="detailHeroActions" id="detailActions"></div>
+        </section>
+
+        <div class="detailLayout">
+          <section class="detailSection">
+            <div class="cardTopline">
+              <div>
+                <p class="panelEyebrow">Client</p>
+                <h3>Coordonnees</h3>
+              </div>
+            </div>
+            <div id="detailCustomer" class="stackGrid"></div>
+          </section>
+
+          <section class="detailSection">
+            <div class="cardTopline">
+              <div>
+                <p class="panelEyebrow">Intervention</p>
+                <h3>Adresse et techniques</h3>
+              </div>
+            </div>
+            <div id="detailAddresses" class="stackList"></div>
+          </section>
+
+          <section class="detailSection">
+            <div class="cardTopline">
+              <div>
+                <p class="panelEyebrow">Planning</p>
+                <h3>Rendez-vous</h3>
+              </div>
+            </div>
+            <div id="detailAppointments" class="stackList"></div>
+          </section>
+
+          <section class="detailSection">
+            <div class="cardTopline">
+              <div>
+                <p class="panelEyebrow">Suivi bureau</p>
+                <h3>Email et Outlook</h3>
+              </div>
+            </div>
+            <div id="detailOutbox" class="stackList"></div>
+          </section>
         </div>
-      </div>
-
-      <!-- ✅ bannière état sync Outlook (lit syncHealth/outlook) -->
-      <div id="syncHealthBanner" class="warn" style="display:none" hidden></div>
-
-      <div id="apptMsg" class="alert"></div>
-      <div id="apptOk" class="ok"></div>
-
-      <div id="apptList" class="list"></div>
-      <div id="apptEmpty" class="muted emptyState" hidden>Aucun rendez-vous</div>
-
-      <div class="hr"></div>
-
-      <h2>Planning public (freeSlots)</h2>
-      <p class="muted">
-        Génère les créneaux visibles côté client (lun→ven, 09:30→17:30, blocs 90 min) sur 8 semaines.
-      </p>
-      <div class="row">
-        <button class="btn primary" id="btnGenFreeSlots" type="button">Générer 8 semaines</button>
-        <button class="btn" id="btnGenPreview" type="button">Prévisualiser (console)</button>
-      </div>
-      <div id="slotsMsg" class="alert"></div>
-      <div id="slotsOk" class="ok"></div>
-
-      <div class="hr"></div>
-
-      <h2>Outlook Sync</h2>
-      <p class="muted">
-        La synchronisation tourne automatiquement via GitHub Actions (cron).
-        <br />
-        Si besoin, tu peux la relancer manuellement (Run workflow).
-      </p>
-
-      <div class="row">
-        <a
-          class="btn primary"
-          id="btnOpenOutlookWorkflow"
-          href="https://github.com/dlirium123-glitch/goffin-booking-web-site/actions/workflows/outlook-sync.yml"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Ouvrir “Outlook sync” (Run workflow)
-        </a>
-
-        <a
-          class="btn"
-          id="btnOpenActionsAll"
-          href="https://github.com/dlirium123-glitch/goffin-booking-web-site/actions"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Tous les workflows
-        </a>
-      </div>
-
-      <div class="warn" style="display:block; margin-top:10px;">
-        ✅ GitHub → bouton <b>Run workflow</b> → relancer si la sync automatique ne passe pas.
       </div>
     </section>
-
-    <!-- RIGHT -->
-    <section class="card">
-      <h2>Planning (vue semaine)</h2>
-      <p class="muted">Lecture seule — reflète l’état des créneaux (free/pending/blocked).</p>
-
-      <div id="planningGrid"></div>
-
-      <div class="hr"></div>
-
-      <h2>Demandes de modification</h2>
-      <p class="muted">Par défaut : status = "new"</p>
-
-      <div class="row">
-        <div>
-          <div class="tiny fieldTitle">Filtre</div>
-          <select id="modifFilter">
-            <option value="new">Nouvelles</option>
-            <option value="all">Toutes</option>
-          </select>
-        </div>
-        <div class="rowEnd">
-          <button class="btn primary" id="btnRefreshModifs" type="button">Rafraîchir</button>
-        </div>
-      </div>
-
-      <div id="modifMsg" class="alert"></div>
-      <div id="modifOk" class="ok"></div>
-
-      <div id="modifList" class="list"></div>
-      <div id="modifEmpty" class="muted emptyState" hidden>Aucune demande</div>
-    </section>
-
-  </div>
+  </section>
 </main>
 
-<!-- Modal login -->
-<div class="overlay" id="overlay">
+<div class="overlay" id="overlay" hidden>
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
-    <h2 id="loginTitle" class="modalTitle">Connexion admin</h2>
-
-    <div class="tiny fieldTitle">Adresse e-mail</div>
-    <input id="loginEmail" type="email" placeholder="Email" autocomplete="email" />
-
-    <div class="tiny fieldTitle">Mot de passe</div>
-    <input id="loginPass" type="password" placeholder="Mot de passe" autocomplete="current-password" />
-
-    <div class="row modalActions">
-      <button class="btn primary" id="doLogin" type="button">Se connecter</button>
-      <button class="btn" id="closeLogin" type="button">Annuler</button>
+    <h2 id="loginTitle">Connexion admin</h2>
+    <label class="fieldBlock">
+      <span class="fieldLabel">Adresse e-mail</span>
+      <input id="loginEmail" type="email" placeholder="Email" autocomplete="email" />
+    </label>
+    <label class="fieldBlock">
+      <span class="fieldLabel">Mot de passe</span>
+      <input id="loginPass" type="password" placeholder="Mot de passe" autocomplete="current-password" />
+    </label>
+    <div class="modalActions">
+      <button class="primaryBtn" id="btnDoLogin" type="button">Se connecter</button>
+      <button class="secondaryBtn" id="btnCloseLogin" type="button">Annuler</button>
     </div>
-
-    <div id="loginErr" class="alert" hidden></div>
+    <div id="loginErr" class="errorBox" hidden></div>
   </div>
 </div>
 
-<script defer src="/admin.v3.js?v=2026-03-08-1"></script>
+<script defer src="/admin.v3.js?v=2026-03-11-1"></script>
 </body>
 </html>

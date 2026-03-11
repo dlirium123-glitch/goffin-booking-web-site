@@ -1,0 +1,76 @@
+name: Send office emails (outbox)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/5 * * * *"
+
+concurrency:
+  group: send-emails
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      TZ: Europe/Brussels
+      FIREBASE_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      OFFICE_EMAIL: ${{ secrets.OFFICE_EMAIL }}
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_SECURE: ${{ secrets.SMTP_SECURE }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASS: ${{ secrets.SMTP_PASS }}
+      SMTP_FROM: ${{ secrets.SMTP_FROM }}
+      EMAIL_BATCH_LIMIT: "20"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Google Auth (service account)
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+
+      - name: Install deps
+        working-directory: tools/send-emails
+        run: npm install
+
+      - name: Validate secrets (no output)
+        run: |
+          if [ -z "$FIREBASE_PROJECT_ID" ]; then
+            echo "Missing secret: GCP_PROJECT_ID"
+            exit 1
+          fi
+          if [ -z "$OFFICE_EMAIL" ]; then
+            echo "Missing secret: OFFICE_EMAIL"
+            exit 1
+          fi
+          if [ -z "$SMTP_HOST" ] || [ -z "$SMTP_USER" ] || [ -z "$SMTP_PASS" ] || [ -z "$SMTP_FROM" ]; then
+            echo "Missing one of: SMTP_HOST / SMTP_USER / SMTP_PASS / SMTP_FROM"
+            exit 1
+          fi
+          echo "Secrets look present"
+
+      - name: Send pending emails
+        working-directory: tools/send-emails
+        run: node send.js
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Outbox sender" >> $GITHUB_STEP_SUMMARY
+          echo "- Frequency: every 5 minutes" >> $GITHUB_STEP_SUMMARY
+          echo "- Batch limit: 20" >> $GITHUB_STEP_SUMMARY
+          echo "- TZ: Europe/Brussels" >> $GITHUB_STEP_SUMMARY

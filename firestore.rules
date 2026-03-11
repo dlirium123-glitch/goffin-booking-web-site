@@ -2,99 +2,155 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ----------------------------
-    // Helpers (auth)
-    // ----------------------------
     function isSignedIn() { return request.auth != null; }
     function uid() { return request.auth.uid; }
+    function isAdmin() { return isSignedIn() && request.auth.token.admin == true; }
 
-    // ✅ Admin = custom claim ONLY (via Admin SDK / GitHub Action)
-    function isAdmin() {
-      return isSignedIn() && request.auth.token.admin == true;
-    }
-
-    // ----------------------------
-    // Helpers (validation)
-    // ----------------------------
-    // slotId format: YYYYMMDD_HHMM (ex: 20260225_1100)
     function isValidSlotId(slotId) {
       return slotId is string && slotId.matches('^[0-9]{8}_[0-9]{4}$');
     }
 
-    function isValidRequestId(rid) {
-      return rid is string && rid.size() >= 10 && rid.size() <= 80;
+    function isValidRequestId(value) {
+      return value is string && value.size() >= 10 && value.size() <= 120;
     }
 
-    // 48h rule (client cannot book < 48h)
     function isAtLeast48hInFuture(ts) {
       return ts is timestamp && ts >= request.time + duration.value(48, 'h');
     }
 
-    // Guard: publicSlots must exist and be free
     function publicSlotIsFree(slotId) {
       return exists(/databases/$(database)/documents/publicSlots/$(slotId))
         && get(/databases/$(database)/documents/publicSlots/$(slotId)).data.status == "free";
     }
 
-    // deny if doc already exists
     function doesNotExist(path) {
       return !exists(path);
     }
 
-    // ----------------------------
-    // Allowlists (keys)
-    // ----------------------------
+    function slotListHasValidShape(slotIds) {
+      return slotIds is list
+        && slotIds.size() >= 1
+        && slotIds.size() <= 6
+        && (
+          (slotIds.size() == 1 && isValidSlotId(slotIds[0])) ||
+          (slotIds.size() == 2 && isValidSlotId(slotIds[0]) && isValidSlotId(slotIds[1])) ||
+          (slotIds.size() == 3 && isValidSlotId(slotIds[0]) && isValidSlotId(slotIds[1]) && isValidSlotId(slotIds[2])) ||
+          (slotIds.size() == 4 && isValidSlotId(slotIds[0]) && isValidSlotId(slotIds[1]) && isValidSlotId(slotIds[2]) && isValidSlotId(slotIds[3])) ||
+          (slotIds.size() == 5 && isValidSlotId(slotIds[0]) && isValidSlotId(slotIds[1]) && isValidSlotId(slotIds[2]) && isValidSlotId(slotIds[3]) && isValidSlotId(slotIds[4])) ||
+          (slotIds.size() == 6 && isValidSlotId(slotIds[0]) && isValidSlotId(slotIds[1]) && isValidSlotId(slotIds[2]) && isValidSlotId(slotIds[3]) && isValidSlotId(slotIds[4]) && isValidSlotId(slotIds[5]))
+        );
+    }
+
+    function slotListAllPublicFree(slotIds) {
+      return slotListHasValidShape(slotIds)
+        && (
+          (slotIds.size() == 1 && publicSlotIsFree(slotIds[0])) ||
+          (slotIds.size() == 2 && publicSlotIsFree(slotIds[0]) && publicSlotIsFree(slotIds[1])) ||
+          (slotIds.size() == 3 && publicSlotIsFree(slotIds[0]) && publicSlotIsFree(slotIds[1]) && publicSlotIsFree(slotIds[2])) ||
+          (slotIds.size() == 4 && publicSlotIsFree(slotIds[0]) && publicSlotIsFree(slotIds[1]) && publicSlotIsFree(slotIds[2]) && publicSlotIsFree(slotIds[3])) ||
+          (slotIds.size() == 5 && publicSlotIsFree(slotIds[0]) && publicSlotIsFree(slotIds[1]) && publicSlotIsFree(slotIds[2]) && publicSlotIsFree(slotIds[3]) && publicSlotIsFree(slotIds[4])) ||
+          (slotIds.size() == 6 && publicSlotIsFree(slotIds[0]) && publicSlotIsFree(slotIds[1]) && publicSlotIsFree(slotIds[2]) && publicSlotIsFree(slotIds[3]) && publicSlotIsFree(slotIds[4]) && publicSlotIsFree(slotIds[5]))
+        );
+    }
+
+    function holdOwnedByUser(holdId) {
+      return exists(/databases/$(database)/documents/holds/$(holdId))
+        && get(/databases/$(database)/documents/holds/$(holdId)).data.uid == uid();
+    }
+
+    function holdSlotMatches(slotId, holdId) {
+      return exists(/databases/$(database)/documents/holdSlots/$(slotId))
+        && get(/databases/$(database)/documents/holdSlots/$(slotId)).data.holdId == holdId
+        && get(/databases/$(database)/documents/holdSlots/$(slotId)).data.status == "hold"
+        && get(/databases/$(database)/documents/holdSlots/$(slotId)).data.expiresAt > request.time;
+    }
+
+    function allSlotsHeldByHold(slotIds, holdId) {
+      return slotListHasValidShape(slotIds)
+        && holdOwnedByUser(holdId)
+        && (
+          (slotIds.size() == 1 && holdSlotMatches(slotIds[0], holdId)) ||
+          (slotIds.size() == 2 && holdSlotMatches(slotIds[0], holdId) && holdSlotMatches(slotIds[1], holdId)) ||
+          (slotIds.size() == 3 && holdSlotMatches(slotIds[0], holdId) && holdSlotMatches(slotIds[1], holdId) && holdSlotMatches(slotIds[2], holdId)) ||
+          (slotIds.size() == 4 && holdSlotMatches(slotIds[0], holdId) && holdSlotMatches(slotIds[1], holdId) && holdSlotMatches(slotIds[2], holdId) && holdSlotMatches(slotIds[3], holdId)) ||
+          (slotIds.size() == 5 && holdSlotMatches(slotIds[0], holdId) && holdSlotMatches(slotIds[1], holdId) && holdSlotMatches(slotIds[2], holdId) && holdSlotMatches(slotIds[3], holdId) && holdSlotMatches(slotIds[4], holdId)) ||
+          (slotIds.size() == 6 && holdSlotMatches(slotIds[0], holdId) && holdSlotMatches(slotIds[1], holdId) && holdSlotMatches(slotIds[2], holdId) && holdSlotMatches(slotIds[3], holdId) && holdSlotMatches(slotIds[4], holdId) && holdSlotMatches(slotIds[5], holdId))
+        );
+    }
+
     function userKeysAllowed() {
       return request.resource.data.keys().hasOnly([
         "email", "company", "vat", "phone", "hqAddress",
-        "createdAt", "updatedAt"
+        "billingAddress", "contactName", "createdAt", "updatedAt"
       ]);
     }
 
     function holdKeysAllowed() {
       return request.resource.data.keys().hasOnly([
-        "uid", "start", "end", "expiresAt", "status",
-        "createdAt", "updatedAt"
+        "uid", "requestAddressTempKey", "slotIds", "start", "end",
+        "expiresAt", "status", "createdAt", "updatedAt"
+      ]);
+    }
+
+    function holdSlotKeysAllowed() {
+      return request.resource.data.keys().hasOnly([
+        "holdId", "start", "end", "expiresAt", "status", "createdAt", "updatedAt"
       ]);
     }
 
     function bookingKeysAllowed() {
       return request.resource.data.keys().hasOnly([
-        "slotId", "uid", "status", "start", "end", "requestId",
-        "createdAt", "updatedAt"
+        "slotId", "appointmentId", "requestId", "holdId", "status",
+        "start", "end", "createdAt", "updatedAt"
       ]);
     }
 
     function requestKeysAllowed() {
       return request.resource.data.keys().hasOnly([
-        "requestId", "uid", "status", "start", "end",
-        "slotIds", "totalSlots", "durationMinutes",
+        "requestNumber", "uid", "status", "customerSnapshot",
+        "totalAddresses", "totalAppointments", "notes",
         "createdAt", "updatedAt"
       ]);
     }
 
-    // Helper: hold must exist for this slot and belong to user, not expired
-    function hasValidHold(slotId, startTs, endTs) {
-      return exists(/databases/$(database)/documents/holds/$(slotId))
-        && get(/databases/$(database)/documents/holds/$(slotId)).data.uid == uid()
-        && get(/databases/$(database)/documents/holds/$(slotId)).data.status == "hold"
-        && get(/databases/$(database)/documents/holds/$(slotId)).data.expiresAt > request.time
-        && get(/databases/$(database)/documents/holds/$(slotId)).data.start == startTs
-        && get(/databases/$(database)/documents/holds/$(slotId)).data.end == endTs;
+    function requestAddressKeysAllowed() {
+      return request.resource.data.keys().hasOnly([
+        "requestId", "uid", "label", "addressLine1", "addressLine2",
+        "postalCode", "city", "region", "country", "warningFlags",
+        "status", "selectedAppointmentId", "serviceMinutes",
+        "travelMinutes", "totalDurationMinutes", "createdAt", "updatedAt"
+      ]);
     }
 
-    // ----------------------------
-    // users (CANONIQUE) doc id = uid
-    // ----------------------------
+    function requestServiceKeysAllowed() {
+      return request.resource.data.keys().hasOnly([
+        "requestId", "requestAddressId", "uid", "serviceTypeId",
+        "serviceCodeSnapshot", "serviceLabelSnapshot", "installationsCount",
+        "serviceMinutes", "answers", "createdAt", "updatedAt"
+      ]);
+    }
+
+    function appointmentKeysAllowed() {
+      return request.resource.data.keys().hasOnly([
+        "requestId", "requestAddressId", "uid", "status", "slotIds", "holdId",
+        "start", "end", "serviceMinutes", "travelMinutes", "totalDurationMinutes",
+        "officeEmailStatus", "outlookStatus", "outlookReference",
+        "createdAt", "updatedAt"
+      ]);
+    }
+
+    function outboxKeysAllowed() {
+      return request.resource.data.keys().hasOnly([
+        "type", "status", "to", "subject", "requestId", "uid",
+        "payload", "attempts", "lastAttemptAt", "sentAt", "error",
+        "createdAt", "updatedAt"
+      ]);
+    }
+
     match /users/{userId} {
-      // client can read own profile (get only)
       allow get: if isSignedIn() && userId == uid();
       allow list: if false;
-
-      // admin can read all
       allow read: if isAdmin();
-
-      // client can create/update own profile
       allow create, update: if isSignedIn()
         && userId == uid()
         && userKeysAllowed()
@@ -102,119 +158,171 @@ service cloud.firestore {
         && request.resource.data.company is string
         && request.resource.data.vat is string
         && request.resource.data.phone is string
-        && request.resource.data.hqAddress is string;
-
+        && request.resource.data.hqAddress is string
+        && request.resource.data.billingAddress is string
+        && request.resource.data.contactName is string;
       allow delete: if isAdmin();
     }
 
-    // ----------------------------
-    // publicSlots (PUBLIC calendar mirror) (readonly from client)
-    // ----------------------------
-    match /publicSlots/{slotId} {
+    match /serviceTypes/{serviceTypeId} {
       allow read: if true;
-      allow create, update, delete: if false; // written by Admin SDK only
+      allow write: if isAdmin();
     }
 
-    // ----------------------------
-    // freeSlots (INTERNAL / admin)
-    // ----------------------------
+    match /publicSlots/{slotId} {
+      allow read: if true;
+      allow create, update, delete: if false;
+    }
+
     match /freeSlots/{slotId} {
       allow read, create, update, delete: if isAdmin();
     }
 
-    // ----------------------------
-    // holds (temporary lock) doc id = slotId
-    // ----------------------------
-    match /holds/{slotId} {
-      // public read ok (needed for transaction checks + UI if you want)
-      allow read: if true;
-
-      allow create: if isSignedIn()
-        && isValidSlotId(slotId)
+    match /holds/{holdId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.uid == uid());
+      allow create, update: if isSignedIn()
         && holdKeysAllowed()
-        && doesNotExist(/databases/$(database)/documents/holds/$(slotId))
-        && publicSlotIsFree(slotId)
         && request.resource.data.uid == uid()
+        && request.resource.data.requestAddressTempKey is string
+        && slotListHasValidShape(request.resource.data.slotIds)
+        && slotListAllPublicFree(request.resource.data.slotIds)
         && request.resource.data.start is timestamp
         && request.resource.data.end is timestamp
         && request.resource.data.expiresAt is timestamp
         && request.resource.data.expiresAt > request.time
         && request.resource.data.expiresAt <= request.time + duration.value(30, 'm')
         && isAtLeast48hInFuture(request.resource.data.start)
-        && request.resource.data.status == "hold";
-
-      allow update: if false;
-
-      // user can delete own hold (or admin)
+        && request.resource.data.status == "hold"
+        && (request.method == "create" ? doesNotExist(/databases/$(database)/documents/holds/$(holdId)) : resource.data.uid == uid());
       allow delete: if isAdmin() || (isSignedIn() && resource.data.uid == uid());
     }
 
-    // ----------------------------
-    // bookings (slot-level docs) doc id = slotId
-    // ----------------------------
-    match /bookings/{bookingId} {
-      allow read: if isAdmin()
-        || (isSignedIn() && resource.data.uid == uid());
+    match /holdSlots/{slotId} {
+      allow read: if true;
+      allow create, update: if isSignedIn()
+        && isValidSlotId(slotId)
+        && holdSlotKeysAllowed()
+        && request.resource.data.holdId is string
+        && holdOwnedByUser(request.resource.data.holdId)
+        && request.resource.data.start is timestamp
+        && request.resource.data.end is timestamp
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt > request.time
+        && request.resource.data.status == "hold"
+        && publicSlotIsFree(slotId);
+      allow delete: if isAdmin()
+        || (isSignedIn() && resource.data.holdId is string && holdOwnedByUser(resource.data.holdId));
+    }
 
+    match /bookings/{slotId} {
+      allow read: if true;
       allow create: if isSignedIn()
-        && isValidSlotId(bookingId)
+        && isValidSlotId(slotId)
         && bookingKeysAllowed()
-        && doesNotExist(/databases/$(database)/documents/bookings/$(bookingId))
-        && request.resource.data.slotId is string
-        && request.resource.data.slotId == bookingId
-        && request.resource.data.uid == uid()
+        && doesNotExist(/databases/$(database)/documents/bookings/$(slotId))
+        && request.resource.data.slotId == slotId
+        && request.resource.data.appointmentId is string
+        && request.resource.data.requestId is string
+        && request.resource.data.holdId is string
         && request.resource.data.status == "pending"
         && request.resource.data.start is timestamp
         && request.resource.data.end is timestamp
         && isAtLeast48hInFuture(request.resource.data.start)
-        && publicSlotIsFree(bookingId)
-        && hasValidHold(bookingId, request.resource.data.start, request.resource.data.end);
-
+        && holdSlotMatches(slotId, request.resource.data.holdId);
       allow update, delete: if isAdmin();
     }
 
-    // ----------------------------
-    // requests (source de vérité)
-    // ----------------------------
     match /requests/{requestId} {
-      allow read: if isAdmin()
-        || (isSignedIn() && resource.data.uid == uid());
-
+      allow read: if isAdmin() || (isSignedIn() && resource.data.uid == uid());
       allow create: if isSignedIn()
         && isValidRequestId(requestId)
         && requestKeysAllowed()
         && doesNotExist(/databases/$(database)/documents/requests/$(requestId))
-        && request.resource.data.requestId == requestId
         && request.resource.data.uid == uid()
+        && request.resource.data.requestNumber is string
         && request.resource.data.status == "pending"
-        && request.resource.data.start is timestamp
-        && request.resource.data.end is timestamp
-        && isAtLeast48hInFuture(request.resource.data.start)
-        && request.resource.data.slotIds is list
-        && request.resource.data.totalSlots is int
-        && request.resource.data.durationMinutes is int
-        // single-slot request (v3)
-        && request.resource.data.totalSlots == 1
-        && request.resource.data.slotIds.size() == 1
-        && isValidSlotId(request.resource.data.slotIds[0])
-        && publicSlotIsFree(request.resource.data.slotIds[0])
-        && hasValidHold(request.resource.data.slotIds[0], request.resource.data.start, request.resource.data.end);
-
+        && request.resource.data.customerSnapshot is map
+        && request.resource.data.totalAddresses is int
+        && request.resource.data.totalAppointments is int
+        && request.resource.data.totalAddresses >= 1
+        && request.resource.data.totalAppointments >= 1;
       allow update, delete: if isAdmin();
     }
 
-    // ----------------------------
-    // legacy (optionnel)
-    // ----------------------------
-    match /appointments/{docId} {
+    match /requestAddresses/{requestAddressId} {
       allow read: if isAdmin() || (isSignedIn() && resource.data.uid == uid());
       allow create: if isSignedIn()
+        && requestAddressKeysAllowed()
         && request.resource.data.uid == uid()
+        && request.resource.data.requestId is string
+        && request.resource.data.addressLine1 is string
+        && request.resource.data.postalCode is string
+        && request.resource.data.city is string
+        && request.resource.data.region is string
+        && request.resource.data.country is string
+        && request.resource.data.warningFlags is list
         && request.resource.data.status == "pending"
+        && request.resource.data.selectedAppointmentId is string
+        && request.resource.data.serviceMinutes is int
+        && request.resource.data.travelMinutes is int
+        && request.resource.data.totalDurationMinutes is int
+        && request.resource.data.totalDurationMinutes == request.resource.data.serviceMinutes + request.resource.data.travelMinutes;
+      allow update, delete: if isAdmin();
+    }
+
+    match /requestServices/{requestServiceId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.uid == uid());
+      allow create: if isSignedIn()
+        && requestServiceKeysAllowed()
+        && request.resource.data.uid == uid()
+        && request.resource.data.requestId is string
+        && request.resource.data.requestAddressId is string
+        && request.resource.data.serviceTypeId is string
+        && request.resource.data.serviceCodeSnapshot is string
+        && request.resource.data.serviceLabelSnapshot is string
+        && request.resource.data.installationsCount is int
+        && request.resource.data.installationsCount >= 1
+        && request.resource.data.serviceMinutes is int
+        && request.resource.data.serviceMinutes >= 60
+        && request.resource.data.answers is map;
+      allow update, delete: if isAdmin();
+    }
+
+    match /appointments/{appointmentId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.uid == uid());
+      allow create: if isSignedIn()
+        && appointmentKeysAllowed()
+        && request.resource.data.uid == uid()
+        && request.resource.data.requestId is string
+        && request.resource.data.requestAddressId is string
+        && request.resource.data.status == "pending"
+        && slotListHasValidShape(request.resource.data.slotIds)
+        && request.resource.data.holdId is string
+        && allSlotsHeldByHold(request.resource.data.slotIds, request.resource.data.holdId)
         && request.resource.data.start is timestamp
         && request.resource.data.end is timestamp
-        && isAtLeast48hInFuture(request.resource.data.start);
+        && isAtLeast48hInFuture(request.resource.data.start)
+        && request.resource.data.serviceMinutes is int
+        && request.resource.data.travelMinutes is int
+        && request.resource.data.totalDurationMinutes is int
+        && request.resource.data.totalDurationMinutes == request.resource.data.serviceMinutes + request.resource.data.travelMinutes
+        && request.resource.data.officeEmailStatus == "pending"
+        && request.resource.data.outlookStatus == "not_created";
       allow update, delete: if isAdmin();
+    }
+
+    match /outbox/{messageId} {
+      allow read, update, delete: if isAdmin();
+      allow create: if isSignedIn()
+        && outboxKeysAllowed()
+        && request.resource.data.uid == uid()
+        && request.resource.data.type == "new_request"
+        && request.resource.data.status == "pending"
+        && request.resource.data.to is string
+        && request.resource.data.subject is string
+        && request.resource.data.requestId is string
+        && request.resource.data.payload is map
+        && request.resource.data.attempts == 0;
     }
 
     match /modificationRequests/{docId} {
@@ -226,12 +334,10 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
-    // internal admin collections
     match /slots/{docId} { allow read, write: if isAdmin(); }
     match /syncHealth/{docId} { allow read, write: if isAdmin(); }
     match /settings/{docId} { allow read, write: if isAdmin(); }
 
-    // fallback: deny all
     match /{document=**} {
       allow read, write: if false;
     }

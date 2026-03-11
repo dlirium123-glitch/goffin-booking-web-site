@@ -2,7 +2,7 @@
 const { Firestore, Timestamp, FieldValue } = require("@google-cloud/firestore")
 const fetch = require("node-fetch")
 const ical = require("node-ical")
-const { pad2, slotIdFromDate, dateFromSlotId, addMinutes, isWeekend } = require("../shared/slot-utils")
+const { slotIdFromDate, dateFromSlotId, addMinutes, startOfLocalDay, addLocalDays, isWeekend } = require("../shared/slot-utils")
 
 function getEnv(name, fallback) {
   const v = process.env[name]
@@ -20,28 +20,43 @@ function rangesOverlap(aStart, aEnd, bStart, bEnd) {
   return aStart < bEnd && bStart < aEnd
 }
 
-function clampToWorkHours(date, dayStartMin, dayEndMin) {
-  const startOfDay = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0)
-  const mins = date.getHours() * 60 + date.getMinutes()
-  if (mins < dayStartMin) {
-    startOfDay.setMinutes(dayStartMin)
-    return startOfDay
-  }
-  if (mins > dayEndMin) {
-    startOfDay.setMinutes(dayEndMin)
-    return startOfDay
-  }
-  return date
+function buildWorkBounds(day, dayStartMin, dayEndMin) {
+  const workStart = startOfLocalDay(day)
+  workStart.setMinutes(dayStartMin)
+
+  const workEnd = startOfLocalDay(day)
+  workEnd.setMinutes(dayEndMin)
+
+  return { workStart, workEnd }
 }
 
-function roundDownToSlot(date, dayStartMin, slotMinutes) {
-  const base = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0)
-  base.setMinutes(dayStartMin)
-  if (date <= base) return base
+function collectBusySlotIdsForOccurrence({ start, end, dayStartMin, dayEndMin, slotMinutes }) {
+  const ids = []
+  const slotMs = slotMinutes * 60000
+  const lastStartMin = dayEndMin - slotMinutes
 
-  const deltaMin = Math.floor((date.getTime() - base.getTime()) / 60000)
-  const steps = Math.floor(deltaMin / slotMinutes)
-  return addMinutes(base, steps * slotMinutes)
+  for (let day = startOfLocalDay(start); day < end; day = addLocalDays(day, 1)) {
+    if (isWeekend(day)) continue
+
+    const { workStart, workEnd } = buildWorkBounds(day, dayStartMin, dayEndMin)
+    const overlapStart = new Date(Math.max(start.getTime(), workStart.getTime()))
+    const overlapEnd = new Date(Math.min(end.getTime(), workEnd.getTime()))
+
+    if (!rangesOverlap(workStart, workEnd, start, end)) continue
+    if (overlapStart >= overlapEnd) continue
+
+    const firstIndex = Math.max(0, Math.floor((overlapStart.getTime() - workStart.getTime()) / slotMs))
+    const lastIndex = Math.floor((overlapEnd.getTime() - 1 - workStart.getTime()) / slotMs)
+
+    for (let index = firstIndex; index <= lastIndex; index++) {
+      const slotStart = addMinutes(workStart, index * slotMinutes)
+      const slotStartMin = slotStart.getHours() * 60 + slotStart.getMinutes()
+      if (slotStartMin < dayStartMin || slotStartMin > lastStartMin) continue
+      ids.push(slotIdFromDate(slotStart))
+    }
+  }
+
+  return ids
 }
 
 function isProtectedBlocked(doc) {
@@ -125,6 +140,7 @@ async function main() {
   const daysForward = Number(getEnv("DAYS_FORWARD", "90"))
   const slotMinutes = Number(getEnv("SLOT_MINUTES", "90"))
   const startOffsetDays = Number(getEnv("START_OFFSET_DAYS", "0"))
+  const fetchTimeoutMs = Number(getEnv("FETCH_TIMEOUT_MS", "15000"))
 
   const dayStartStr = getEnv("DAY_START", "09:30")
   const dayEndStr = getEnv("DAY_END", "17:30")
@@ -149,15 +165,15 @@ async function main() {
   }
 
   const now = new Date()
-  const fromDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + startOffsetDays)
-  const toDate = new Date(fromDate.getTime() + daysForward * 24 * 60 * 60000)
+  const fromDate = addLocalDays(now, startOffsetDays)
+  const toDate = addLocalDays(fromDate, daysForward)
 
   console.log("Outlook sync", { projectId, from: fromDate.toISOString(), to: toDate.toISOString() })
 
   // 1) Fetch ICS
   let icsText = ""
   try {
-    const res = await fetch(icsUrl)
+    const res = await fetch(icsUrl, { timeout: fetchTimeoutMs })
     if (!res.ok) throw new Error(`ICS fetch failed: ${res.status}`)
     icsText = await res.text()
   } catch (e) {
@@ -191,23 +207,16 @@ async function main() {
     occs.forEach(({ start, end }) => {
       if (end <= fromDate || start >= toDate) return
       occurrencesSeen++
-
-      let cursor = new Date(Math.max(start.getTime(), fromDate.getTime()))
-      const windowEnd = new Date(Math.min(end.getTime(), toDate.getTime()))
-
-      while (cursor < windowEnd) {
-        if (!isWeekend(cursor)) {
-          const dayClamped = clampToWorkHours(cursor, dayStartMin, dayEndMin)
-          const slotStart = roundDownToSlot(dayClamped, dayStartMin, slotMinutes)
-          const slotEnd = addMinutes(slotStart, slotMinutes)
-
-          const slotStartMin = slotStart.getHours() * 60 + slotStart.getMinutes()
-          if (slotStartMin >= dayStartMin && slotStartMin <= (dayEndMin - slotMinutes)) {
-            if (rangesOverlap(slotStart, slotEnd, start, end)) busyIds.add(slotIdFromDate(slotStart))
-          }
-        }
-        cursor = addMinutes(cursor, 15)
-      }
+      const clippedStart = new Date(Math.max(start.getTime(), fromDate.getTime()))
+      const clippedEnd = new Date(Math.min(end.getTime(), toDate.getTime()))
+      const slotIds = collectBusySlotIdsForOccurrence({
+        start: clippedStart,
+        end: clippedEnd,
+        dayStartMin,
+        dayEndMin,
+        slotMinutes,
+      })
+      slotIds.forEach((id) => busyIds.add(id))
     })
   })
 

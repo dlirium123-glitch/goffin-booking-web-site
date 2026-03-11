@@ -82,3 +82,28 @@ Réservation de créneaux avec hold temporaire, règle des 48h et synchronisatio
 - `syncHealth` : lecture réservée aux admins ; le client affiche “statut inconnu” si non admin (volontaire).
 - Index Firestore : ajouter des index composites si de nouvelles requêtes composées sont introduites.
 - Documentation détaillée et analyse multi-angles : voir `ANALYSE.md` (si présent).
+## Outbox email
+
+Le projet inclut un sender bureau base sur l'outbox Firestore.
+
+- Workflow GitHub : `.github/workflows/send-emails.yml`
+- Script Node : `tools/send-emails/send.js`
+- Frequence : toutes les 5 minutes
+
+Secrets attendus :
+
+- `OFFICE_EMAIL`
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_SECURE`
+- `SMTP_USER`
+- `SMTP_PASS`
+- `SMTP_FROM`
+
+Le sender :
+
+- lit les documents `outbox` avec `status = pending`
+- construit un email a partir de `requests`, `requestAddresses`, `requestServices`, `appointments`
+- envoie via SMTP
+- met `outbox.status` a `sent` ou `failed`
+- met `appointments.officeEmailStatus` a `sent` ou `failed`

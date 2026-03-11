@@ -19,7 +19,7 @@ admin.initializeApp({ projectId });
 const db = admin.firestore();
 const auth = admin.auth();
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function deleteCollection(name, batchSize = 400) {
   const col = db.collection(name);
@@ -30,16 +30,14 @@ async function deleteCollection(name, batchSize = 400) {
     if (snap.empty) break;
 
     const batch = db.batch();
-    snap.docs.forEach((d) => batch.delete(d.ref));
+    snap.docs.forEach((doc) => batch.delete(doc.ref));
     await batch.commit();
 
     deletedTotal += snap.size;
-
-    // petite pause pour éviter le throttling
     await sleep(150);
   }
 
-  console.log(`🗑️  ${name}: deleted ${deletedTotal} docs`);
+  console.log(`[reset] ${name}: deleted ${deletedTotal} docs`);
 }
 
 async function deleteAllAuthUsers() {
@@ -50,37 +48,36 @@ async function deleteAllAuthUsers() {
     const res = await auth.listUsers(1000, nextPageToken);
     if (res.users.length === 0) break;
 
-    const uids = res.users.map((u) => u.uid);
-    // deleteUsers accepte max 1000
+    const uids = res.users.map((user) => user.uid);
     await auth.deleteUsers(uids);
 
     total += uids.length;
-    console.log(`👤 Deleted ${uids.length} auth users (running total: ${total})`);
+    console.log(`[reset] auth users deleted: ${uids.length} (running total: ${total})`);
 
     if (!res.pageToken) break;
     nextPageToken = res.pageToken;
-
     await sleep(150);
   }
 
-  console.log(`✅ Auth: deleted total ${total} users`);
+  console.log(`[reset] auth total deleted: ${total}`);
 }
 
 (async () => {
   console.log("======================================");
-  console.log("🔥 RESET ALL — PROJECT:", projectId);
+  console.log("RESET ALL - PROJECT:", projectId);
   console.log("======================================");
 
-  // ⚠️ Liste des collections qu’on wipe “à coup sûr”
-  // Ajoute/enlève si tu en crées de nouvelles.
   const collections = [
-    "admins",
-    "clients",
-    "profiles", // au cas où il reste des vieux tests
+    "users",
+    "serviceTypes",
     "appointments",
     "bookings",
     "requests",
+    "requestAddresses",
+    "requestServices",
     "holds",
+    "holdSlots",
+    "outbox",
     "modificationRequests",
     "slots",
     "freeSlots",
@@ -89,24 +86,24 @@ async function deleteAllAuthUsers() {
     "settings",
   ];
 
-  for (const c of collections) {
+  for (const name of collections) {
     try {
-      await deleteCollection(c);
-    } catch (e) {
-      console.warn(`⚠️ ${c}: error while deleting (maybe empty / missing)`, e?.message || e);
+      await deleteCollection(name);
+    } catch (error) {
+      console.warn(`[reset] ${name}: delete failed`, error?.message || error);
     }
   }
 
   try {
     await deleteAllAuthUsers();
-  } catch (e) {
-    console.warn("⚠️ Auth delete failed:", e?.message || e);
+  } catch (error) {
+    console.warn("[reset] auth delete failed:", error?.message || error);
   }
 
   console.log("======================================");
-  console.log("✅ RESET DONE");
+  console.log("RESET DONE");
   console.log("======================================");
-})().catch((e) => {
-  console.error("❌ RESET FAILED", e);
+})().catch((error) => {
+  console.error("RESET FAILED", error);
   process.exit(1);
 });
